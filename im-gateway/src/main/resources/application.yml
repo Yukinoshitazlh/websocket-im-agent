@@ -1,0 +1,38 @@
+server:
+  port: ${GATEWAY_HTTP_PORT:8081}
+
+spring:
+  application:
+    name: im-gateway
+  config:
+    import: optional:file:.env[.properties],optional:file:../.env[.properties]
+  threads:
+    virtual:
+      enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:im_redis_123456}
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:im_admin}
+    password: ${RABBITMQ_PASSWORD:im_mq_123456}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+im:
+  gateway:
+    node-id: ${GATEWAY_NODE_ID:gateway-1}
+    ws-port: ${WS_PORT:9001}
+    ws-path: /ws
+    boss-threads: 1
+    worker-threads: 0
+    reader-idle-seconds: 60
+    jwt-secret: ${JWT_SECRET:im-agent-local-dev-jwt-secret-key-32bytes!}
+    jwt-expire-seconds: 604800

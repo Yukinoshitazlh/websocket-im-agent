@@ -1,0 +1,57 @@
+services:
+  # 阶段 1～4 核心：在线路由表、未读数、幂等去重、短期对话记忆、限流
+  redis:
+    image: redis:7.2-alpine
+    container_name: im-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-im_redis_123456}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-im_redis_123456}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 阶段 3～4 核心：IM 网关与 Agent 异步解耦、跨节点消息推送
+  # 管理后台：http://localhost:15672
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: im-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-im_admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-im_mq_123456}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # 阶段 3 可选（启动方式：docker compose --profile rag up -d）
+  # 轻量向量数据库，用于带会话权限隔离的群聊记忆 RAG 检索
+  qdrant:
+    image: qdrant/qdrant:v1.12.5
+    container_name: im-qdrant
+    restart: unless-stopped
+    profiles: ["rag"]
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  redis_data:
+  rabbitmq_data:
+  qdrant_data:
