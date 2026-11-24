@@ -19,9 +19,9 @@ import com.imagent.server.entity.ImUser;
 import com.imagent.server.mapper.ImConversationMapper;
 import com.imagent.server.mapper.ImMessageMapper;
 import com.imagent.server.mapper.ImUserMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -35,11 +35,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MessageService {
 
     private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(10);
@@ -47,14 +47,47 @@ public class MessageService {
     private final ImMessageMapper messageMapper;
     private final ImConversationMapper conversationMapper;
     private final ImUserMapper userMapper;
+    private final UserService userService;
     private final ConversationService conversationService;
     private final SeqGeneratorService seqGeneratorService;
     private final UnreadService unreadService;
     private final AgentBridgeService agentBridgeService;
+    private final RateLimitService rateLimitService;
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
+    private final Executor pushDispatchExecutor;
+
+    public MessageService(ImMessageMapper messageMapper,
+                          ImConversationMapper conversationMapper,
+                          ImUserMapper userMapper,
+                          UserService userService,
+                          ConversationService conversationService,
+                          SeqGeneratorService seqGeneratorService,
+                          UnreadService unreadService,
+                          AgentBridgeService agentBridgeService,
+                          RateLimitService rateLimitService,
+                          StringRedisTemplate redisTemplate,
+                          RabbitTemplate rabbitTemplate,
+                          TransactionTemplate transactionTemplate,
+                          ObjectMapper objectMapper,
+                          @Qualifier("pushDispatchExecutor") Executor pushDispatchExecutor) {
+        this.messageMapper = messageMapper;
+        this.conversationMapper = conversationMapper;
+        this.userMapper = userMapper;
+        this.userService = userService;
+        this.conversationService = conversationService;
+        this.seqGeneratorService = seqGeneratorService;
+        this.unreadService = unreadService;
+        this.agentBridgeService = agentBridgeService;
+        this.rateLimitService = rateLimitService;
+        this.redisTemplate = redisTemplate;
+        this.rabbitTemplate = rabbitTemplate;
+        this.transactionTemplate = transactionTemplate;
+        this.objectMapper = objectMapper;
+        this.pushDispatchExecutor = pushDispatchExecutor;
+    }
 
     public List<MessageVO> listHistory(Long userId, Long conversationId, int limit) {
         if (!conversationService.isMember(conversationId, userId)) {
@@ -115,7 +148,9 @@ public class MessageService {
         if (convId == null || payload.getContent() == null || payload.getContent().isBlank()) {
             throw new BizException(ErrorCode.BAD_REQUEST, "会话ID和消息内容不能为空");
         }
-        if (!conversationService.isMember(convId, senderId)) {
+        // 热路径仅从 Redis 缓存读取一次会话成员列表，同时完成权限校验与后续推送名单复用（消除 2 次 MySQL 查询）
+        List<Long> memberIds = conversationService.listMemberIds(convId);
+        if (!memberIds.contains(senderId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "无权向该会话发送消息");
         }
 
@@ -123,13 +158,22 @@ public class MessageService {
                 ? UUID.randomUUID().toString()
                 : payload.getClientMsgId().trim();
 
-        // 1. Redis 快速幂等拦截
+        // 1. Redis 快速幂等拦截（重传请求不消耗新限流令牌）
         String idempKey = RedisKeys.msgIdempotency(senderId, clientMsgId);
         ServerAckPayload cachedAck = readCachedAck(idempKey);
         if (cachedAck != null) {
             log.info("命中 Redis 幂等缓存，跳过重复落库: senderId={}, clientMsgId={}, seq={}",
                     senderId, clientMsgId, cachedAck.getSeq());
             return cachedAck;
+        }
+
+        // 1.5 普通消息发送令牌桶限流
+        rateLimitService.checkChatSendAllowed(senderId);
+
+        // 若触发 @AI，在落库前先校验 @AI 独立频率与日配额限流
+        boolean triggerAgent = agentBridgeService.shouldTriggerAgent(payload.getMentionAgent(), payload.getContent());
+        if (triggerAgent) {
+            rateLimitService.checkAgentTriggerAllowed(senderId);
         }
 
         // 2. 事务内落库 + 数据库唯一索引兜底并发重传
@@ -184,17 +228,10 @@ public class MessageService {
                 .seq(savedMessage.getSeq())
                 .build();
 
-        // 3. 事务已提交：写入幂等缓存、递增未读数并跨节点推送
+        // 3. 事务已提交：写入幂等缓存，并将未读计数、RabbitMQ 跨节点推送与 @AI 投递卸载至平台线程池异步执行
         cacheAck(idempKey, ack);
 
-        List<Long> memberIds = conversationService.listMemberIds(convId);
-        unreadService.incrementUnreadForMembers(convId, senderId, memberIds);
-        // 发送者本人已读到本条消息
-        unreadService.markAsRead(senderId, convId, savedMessage.getSeq());
-
-        ImUser sender = userMapper.selectById(senderId);
-        String senderNickname = sender != null ? sender.getNickname() : ("用户" + senderId);
-
+        String senderNickname = userService.getNicknameCached(senderId);
         ChatPushPayload pushPayload = ChatPushPayload.builder()
                 .msgId(savedMessage.getId())
                 .conversationId(convId)
@@ -208,12 +245,18 @@ public class MessageService {
                 .createdAt(System.currentTimeMillis())
                 .build();
 
-        dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.CHAT_PUSH, pushPayload));
-
-        // 4. 若触发 @AI，异步投递给独立的 im-agent Worker（绝不阻塞普通消息主链路）
-        if (agentBridgeService.shouldTriggerAgent(payload.getMentionAgent(), savedMessage.getContent())) {
-            agentBridgeService.enqueueAgentTask(convId, senderId, savedMessage.getId(), savedMessage.getContent());
-        }
+        pushDispatchExecutor.execute(() -> {
+            try {
+                unreadService.incrementUnreadForMembers(convId, senderId, memberIds);
+                unreadService.clearSenderUnreadFast(senderId, convId);
+                dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.CHAT_PUSH, pushPayload));
+                if (triggerAgent) {
+                    agentBridgeService.enqueueAgentTask(convId, senderId, savedMessage.getId(), savedMessage.getContent());
+                }
+            } catch (Exception e) {
+                log.error("异步推送/后处理消息失败: msgId={}, convId={}", savedMessage.getId(), convId, e);
+            }
+        });
         return ack;
     }
 

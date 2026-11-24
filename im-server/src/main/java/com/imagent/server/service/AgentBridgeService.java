@@ -7,6 +7,7 @@ import com.imagent.common.model.BizException;
 import com.imagent.common.model.ErrorCode;
 import com.imagent.common.mq.AgentControlEvent;
 import com.imagent.common.mq.AgentTaskEvent;
+import com.imagent.server.dto.AgentMetricsVO;
 import com.imagent.server.entity.ImAgentApproval;
 import com.imagent.server.entity.ImAgentTask;
 import com.imagent.server.entity.ImGroupReminder;
@@ -158,5 +159,42 @@ public class AgentBridgeService {
                 .eq(ImGroupReminder::getConversationId, conversationId)
                 .orderByDesc(ImGroupReminder::getCreatedAt)
                 .last("LIMIT 20"));
+    }
+
+    public AgentMetricsVO getConversationMetrics(Long userId, Long conversationId) {
+        List<ImAgentTask> tasks = listRecentTasks(userId, conversationId);
+        List<ImGroupReminder> reminders = listGroupReminders(userId, conversationId);
+
+        int done = 0, aborted = 0, waiting = 0, failed = 0;
+        int ttftSum = 0, ttftCnt = 0;
+        int totalMsSum = 0, totalMsCnt = 0;
+        int promptTokens = 0, completionTokens = 0;
+
+        for (ImAgentTask t : tasks) {
+            String st = t.getStatus();
+            if ("DONE".equals(st)) done++;
+            else if ("ABORTED".equals(st)) aborted++;
+            else if ("WAITING_APPROVAL".equals(st)) waiting++;
+            else if ("FAILED".equals(st)) failed++;
+
+            if (t.getTtftMs() != null) { ttftSum += t.getTtftMs(); ttftCnt++; }
+            if (t.getTotalMs() != null) { totalMsSum += t.getTotalMs(); totalMsCnt++; }
+            if (t.getPromptTokens() != null) promptTokens += t.getPromptTokens();
+            if (t.getCompletionTokens() != null) completionTokens += t.getCompletionTokens();
+        }
+
+        return AgentMetricsVO.builder()
+                .totalTasks(tasks.size())
+                .doneCount(done)
+                .abortedCount(aborted)
+                .waitingApprovalCount(waiting)
+                .failedCount(failed)
+                .avgTtftMs(ttftCnt > 0 ? ttftSum / ttftCnt : null)
+                .avgTotalMs(totalMsCnt > 0 ? totalMsSum / totalMsCnt : null)
+                .totalPromptTokens(promptTokens)
+                .totalCompletionTokens(completionTokens)
+                .recentTasks(tasks)
+                .reminders(reminders)
+                .build();
     }
 }

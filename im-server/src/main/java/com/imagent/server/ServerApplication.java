@@ -1,6 +1,7 @@
 package com.imagent.server;
 
 import com.imagent.common.security.JwtTokenUtil;
+import com.imagent.server.config.RateLimitProperties;
 import com.imagent.server.config.ServerSecurityProperties;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
@@ -11,7 +12,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 @SpringBootApplication
 @MapperScan("com.imagent.server.mapper")
-@EnableConfigurationProperties(ServerSecurityProperties.class)
+@EnableConfigurationProperties({ServerSecurityProperties.class, RateLimitProperties.class})
 public class ServerApplication {
 
     public static void main(String[] args) {

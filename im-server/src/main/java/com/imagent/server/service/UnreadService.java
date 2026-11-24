@@ -85,4 +85,11 @@ public class UnreadService {
         log.debug("推进已读水位: userId={}, convId={}, readSeq={}, remainingUnread={}",
                 userId, conversationId, readSeq, remaining);
     }
+
+    /**
+     * 发送者热路径快速清零自身未读缓存（零 MySQL 往返，由客户端随后上报的 MSG_ACK 异步推进 DB last_read_seq）
+     */
+    public void clearSenderUnreadFast(Long senderId, Long conversationId) {
+        redisTemplate.opsForHash().delete(RedisKeys.userUnreadHash(senderId), String.valueOf(conversationId));
+    }
 }

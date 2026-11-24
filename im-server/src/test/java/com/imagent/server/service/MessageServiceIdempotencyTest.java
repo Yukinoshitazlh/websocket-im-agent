@@ -19,6 +19,7 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -34,10 +35,12 @@ class MessageServiceIdempotencyTest {
     @Mock private ImMessageMapper messageMapper;
     @Mock private ImConversationMapper conversationMapper;
     @Mock private ImUserMapper userMapper;
+    @Mock private UserService userService;
     @Mock private ConversationService conversationService;
     @Mock private SeqGeneratorService seqGeneratorService;
     @Mock private UnreadService unreadService;
     @Mock private AgentBridgeService agentBridgeService;
+    @Mock private RateLimitService rateLimitService;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOperations;
     @Mock private RabbitTemplate rabbitTemplate;
@@ -49,9 +52,9 @@ class MessageServiceIdempotencyTest {
     @BeforeEach
     void setUp() {
         messageService = new MessageService(
-                messageMapper, conversationMapper, userMapper, conversationService,
-                seqGeneratorService, unreadService, agentBridgeService, redisTemplate, rabbitTemplate,
-                transactionTemplate, objectMapper
+                messageMapper, conversationMapper, userMapper, userService, conversationService,
+                seqGeneratorService, unreadService, agentBridgeService, rateLimitService, redisTemplate, rabbitTemplate,
+                transactionTemplate, objectMapper, Runnable::run
         );
     }
 
@@ -59,7 +62,7 @@ class MessageServiceIdempotencyTest {
     void shouldReturnCachedAckWhenRedisIdempotencyKeyHits() throws Exception {
         ServerAckPayload cached = ServerAckPayload.builder()
                 .clientMsgId("c-dup-1").msgId(9001L).conversationId(1001L).seq(7L).build();
-        when(conversationService.isMember(1001L, 2001L)).thenReturn(true);
+        when(conversationService.listMemberIds(1001L)).thenReturn(List.of(2001L, 2002L));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("im:idemp:2001:c-dup-1")).thenReturn(objectMapper.writeValueAsString(cached));
 
@@ -76,7 +79,7 @@ class MessageServiceIdempotencyTest {
 
     @Test
     void shouldFallbackToDbQueryWhenDuplicateKeyOccursConcurrently() {
-        when(conversationService.isMember(1001L, 2001L)).thenReturn(true);
+        when(conversationService.listMemberIds(1001L)).thenReturn(List.of(2001L, 2002L));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get("im:idemp:2001:c-race-1")).thenReturn(null);
         when(transactionTemplate.execute(any())).thenThrow(new DuplicateKeyException("uk_sender_client_msg"));

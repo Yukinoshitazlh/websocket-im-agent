@@ -3,737 +3,186 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebSocket IM + AI Agent 联调台 (阶段 3 Agent 融合)</title>
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; align-items: center; justify-content: center; }
-        .auth-card { width: 380px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; box-shadow: 0 20px 40px rgba(0,0,0,0.4); }
-        .auth-card h2 { margin-bottom: 16px; font-size: 20px; text-align: center; }
-        .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
-        .tabs button { flex: 1; padding: 8px; border: none; border-radius: 6px; background: #334155; color: #cbd5e1; cursor: pointer; font-weight: 600; }
-        .tabs button.active { background: #3b82f6; color: #fff; }
-        .field { margin-bottom: 12px; }
-        .field label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
-        .field input { width: 100%; padding: 9px 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; outline: none; }
-        .btn { width: 100%; padding: 10px; border: none; border-radius: 6px; background: #3b82f6; color: #fff; font-weight: 600; cursor: pointer; margin-top: 6px; }
-        .btn:hover { background: #2563eb; }
-        .btn-sm { width: auto; padding: 6px 10px; font-size: 12px; margin-top: 0; }
-        .btn-secondary { background: #475569; }
-        .btn-secondary:hover { background: #64748b; }
-        .btn-warn { background: #d97706; }
-        .btn-warn:hover { background: #b45309; }
-        .btn-ai { background: #0d9488; }
-        .btn-ai:hover { background: #0f766e; }
-        .btn-danger { background: #dc2626; }
-        .btn-danger:hover { background: #b91c1c; }
-        .btn-success { background: #16a34a; }
-        .btn-success:hover { background: #15803d; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .err { color: #f87171; font-size: 12px; margin-top: 8px; min-height: 16px; text-align: center; }
-
-        .app { display: none; width: 1160px; height: 92vh; background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-        .sidebar { width: 330px; border-right: 1px solid #334155; display: flex; flex-direction: column; background: #162032; }
-        .profile-bar { padding: 12px 14px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-        .ws-status { font-size: 12px; display: flex; align-items: center; gap: 6px; color: #94a3b8; margin-top: 4px; }
-        .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; flex-shrink: 0; }
-        .dot.on { background: #22c55e; }
-        .dot.reconnecting { background: #f59e0b; }
-        .gw-bar { padding: 8px 12px; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 6px; background: #0f172a; font-size: 12px; }
-        .gw-bar select { flex: 1; background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 5px; padding: 4px 6px; font-size: 12px; }
-        .action-box { padding: 10px 12px; border-bottom: 1px solid #334155; display: flex; gap: 6px; }
-        .action-box input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 12px; }
-        .user-results { max-height: 140px; overflow-y: auto; border-bottom: 1px solid #334155; display: none; background: #0f172a; }
-        .user-item { padding: 8px 12px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; }
-        .conv-list { flex: 1; overflow-y: auto; }
-        .conv-item { padding: 12px 14px; border-bottom: 1px solid #1e293b; cursor: pointer; transition: background 0.15s; }
-        .conv-item:hover, .conv-item.active { background: #253349; }
-        .conv-title { font-size: 14px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
-        .badge { background: #ef4444; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; min-width: 18px; text-align: center; }
-        .conv-preview { font-size: 12px; color: #94a3b8; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-        .chat-main { flex: 1; display: flex; flex-direction: column; }
-        .chat-header { padding: 12px 18px; border-bottom: 1px solid #334155; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-        .sync-banner { font-size: 12px; color: #38bdf8; }
-        .msg-list { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
-        .msg-row { display: flex; flex-direction: column; max-width: 76%; }
-        .msg-row.mine { align-self: flex-end; align-items: flex-end; }
-        .msg-meta { font-size: 11px; color: #94a3b8; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
-        .ai-tag { background: #0d9488; color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 700; }
-        .msg-bubble { padding: 10px 14px; border-radius: 10px; background: #334155; line-height: 1.5; font-size: 14px; word-break: break-word; white-space: pre-wrap; }
-        .msg-row.mine .msg-bubble { background: #2563eb; color: #fff; }
-        .msg-row.ai .msg-bubble { background: #132a2e; border: 1px solid #0d9488; color: #e2f8f5; }
-        .stream-status { font-size: 11px; color: #2dd4bf; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        .msg-ack { font-size: 10px; color: #94a3b8; margin-top: 2px; }
-        .msg-ack.pending { color: #f59e0b; }
-        .msg-ack.ok { color: #22c55e; }
-        .msg-ack.aborted { color: #f87171; }
-
-        .approval-card { background: #292111; border: 1px solid #d97706; border-radius: 10px; padding: 14px; max-width: 78%; }
-        .approval-title { font-size: 13px; font-weight: 700; color: #fbbf24; margin-bottom: 6px; }
-        .approval-summary { font-size: 13px; color: #fef3c7; margin-bottom: 10px; line-height: 1.45; }
-        .approval-actions { display: flex; gap: 8px; align-items: center; }
-        .approval-result { font-size: 12px; color: #94a3b8; margin-left: 6px; }
-
-        .composer { padding: 12px 18px; border-top: 1px solid #334155; display: flex; gap: 8px; }
-        .composer input { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #fff; outline: none; }
-
-        .modal-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 100; }
-        .modal-mask.show { display: flex; }
-        .modal-box { width: 380px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
-        .modal-box h3 { font-size: 16px; margin-bottom: 12px; }
-        .member-picker { max-height: 200px; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; padding: 6px; margin: 10px 0 14px; background: #0f172a; }
-        .member-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 13px; cursor: pointer; border-radius: 4px; }
-        .member-opt:hover { background: #1e293b; }
-        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-    </style>
+    <title>PulseIM — 分布式 WebSocket 即时通信与 AI 协同工作台</title>
+    <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 
-<div class="auth-card" id="authCard">
-    <h2>IM + AI Agent 联调登录</h2>
-    <div class="tabs">
-        <button id="tabLogin" class="active" onclick="switchTab('login')">登录</button>
-        <button id="tabReg" onclick="switchTab('register')">注册</button>
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- 登录与注册屏 -->
+<div class="auth-screen" id="authScreen">
+    <div class="auth-shell">
+        <div class="auth-brand">
+            <div>
+                <div class="brand-mark">
+                    <span class="brand-icon">IM</span>
+                    <span>PulseIM 工作台</span>
+                </div>
+                <h1>可靠长连接与 AI Agent<br>实时协同通信系统</h1>
+                <p>基于 JDK 21、Netty 4、Redis、RabbitMQ 与手写 ReAct 状态机打造的分布式即时聊天与智能助手演示端。</p>
+                <ul class="feature-list">
+                    <li><span class="feature-dot"></span>多网关精准路由与断线重连增量同步</li>
+                    <li><span class="feature-dot"></span>Lua 原子定序、双重幂等去重与令牌桶限流</li>
+                    <li><span class="feature-dot"></span>全双工 AI 流式生成与毫秒级中途打断</li>
+                    <li><span class="feature-dot"></span>权限隔离群聊检索与人机协同审批卡片</li>
+                </ul>
+            </div>
+            <div style="font-size:12px;color:#6E7B96;">同一浏览器开两个标签页即可分别登录不同账号互聊</div>
+        </div>
+
+        <form class="auth-form-pane" onsubmit="submitAuth(event)">
+            <div class="auth-tabs">
+                <button type="button" id="tabLogin" class="active" onclick="switchTab('login')">账号登录</button>
+                <button type="button" id="tabReg" onclick="switchTab('register')">注册新账号</button>
+            </div>
+            <div class="field">
+                <label for="username">账号</label>
+                <input class="input" id="username" placeholder="例如 alice" autocomplete="username" required />
+            </div>
+            <div class="field">
+                <label for="password">密码</label>
+                <input class="input" id="password" type="password" placeholder="至少 6 位" autocomplete="current-password" required />
+            </div>
+            <div class="field" id="nicknameField" style="display:none;">
+                <label for="nickname">展示昵称</label>
+                <input class="input" id="nickname" placeholder="例如 Alice" />
+            </div>
+            <button type="submit" class="btn btn-primary btn-full" id="authSubmitBtn">登录工作台</button>
+            <div class="auth-err" id="authErr"></div>
+        </form>
     </div>
-    <div class="field">
-        <label>账号</label>
-        <input id="username" placeholder="如 alice" />
-    </div>
-    <div class="field">
-        <label>密码</label>
-        <input id="password" type="password" placeholder="至少 6 位" />
-    </div>
-    <div class="field" id="nicknameField" style="display:none;">
-        <label>昵称</label>
-        <input id="nickname" placeholder="如 Alice" />
-    </div>
-    <button class="btn" onclick="submitAuth()">进入聊天</button>
-    <div class="err" id="authErr"></div>
 </div>
 
-<div class="app" id="app">
-    <div class="sidebar">
-        <div class="profile-bar">
-            <div style="min-width:0;">
-                <div id="meNickname" style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">-</div>
-                <div class="ws-status"><span class="dot" id="wsDot"></span><span id="wsText">未连接</span></div>
+<!-- 主三栏工作台 -->
+<div class="workspace" id="workspace">
+    <!-- 左栏：身份、网关调试、搜索与会话列表 -->
+    <aside class="sidebar">
+        <div class="sidebar-top">
+            <div class="me-info">
+                <div class="avatar" id="meAvatar">U</div>
+                <div style="min-width:0;">
+                    <div class="me-name" id="meNickname">-</div>
+                    <div class="ws-pill">
+                        <span class="status-dot" id="wsDot"></span>
+                        <span id="wsText">未连接</span>
+                    </div>
+                </div>
             </div>
-            <button class="btn btn-sm btn-secondary" onclick="logout()">退出</button>
+            <button class="btn btn-ghost btn-xs" onclick="logout()">退出</button>
         </div>
-        <div class="gw-bar">
-            <span>网关:</span>
+
+        <div class="gw-strip">
+            <span>节点</span>
             <select id="gwSelect" onchange="switchGateway()">
                 <option value="ws://127.0.0.1:9001/ws">gateway-1 (:9001)</option>
                 <option value="ws://127.0.0.1:9002/ws">gateway-2 (:9002)</option>
             </select>
-            <button class="btn btn-sm btn-secondary" id="toggleNetBtn" onclick="toggleManualOffline()">模拟断网</button>
+            <button class="btn btn-ghost btn-xs" id="toggleNetBtn" onclick="toggleManualOffline()">模拟断网</button>
         </div>
-        <div class="action-box">
-            <input id="searchInput" placeholder="搜账号/昵称发起单聊..." />
-            <button class="btn btn-sm" onclick="searchUsers()">搜索</button>
-            <button class="btn btn-sm btn-secondary" onclick="createGroupPrompt()">建群</button>
+
+        <div class="toolbar-row">
+            <input class="input" id="searchInput" placeholder="搜索账号或昵称..." onkeydown="if(event.key==='Enter') searchUsers()" />
+            <button class="btn btn-primary btn-xs" onclick="searchUsers()">搜索</button>
+            <button class="btn btn-ghost btn-xs" onclick="openGroupModal()">建群</button>
         </div>
-        <div class="user-results" id="userResults"></div>
+
+        <div class="search-dropdown" id="userResults"></div>
         <div class="conv-list" id="convList"></div>
-    </div>
-    <div class="chat-main">
-        <div class="chat-header">
-            <span id="chatTitle">请选择或发起一个会话</span>
-            <span class="sync-banner" id="chatSeqInfo"></span>
+    </aside>
+
+    <!-- 中栏：实时消息流与快捷输入区 -->
+    <main class="chat-stage">
+        <header class="chat-header">
+            <div class="chat-title-wrap">
+                <div class="chat-title" id="chatTitle">选择一个会话开始聊天</div>
+                <div class="chat-sub" id="chatSub">支持单聊、群聊、跨网关推送与 @AI 协同</div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-ghost btn-xs" onclick="toggleInspector()">AI 观测与日程</button>
+            </div>
+        </header>
+
+        <section class="msg-scroll" id="msgList">
+            <div class="empty-stage" id="emptyStage">
+                <h3>欢迎来到 PulseIM 协同工作台</h3>
+                <p>在左侧搜索用户发起单聊或创建群聊，也可以直接向任意会话发送 @AI 指令体验流式生成与审批闭环。</p>
+            </div>
+        </section>
+
+        <footer class="composer-wrap">
+            <div class="quick-bar">
+                <button class="chip-btn ai-chip" onclick="fillPrompt('@AI 总结刚才聊了什么', false)">@AI 总结群聊</button>
+                <button class="chip-btn ai-chip" onclick="fillPrompt('@AI 帮我建一个明早10点周会提醒', false)">@AI 创建提醒（审批卡片）</button>
+                <button class="chip-btn ai-chip" onclick="fillPrompt('@AI 介绍一下这个系统的架构', false)">@AI 流式长回复（测停止）</button>
+                <button class="chip-btn" onclick="sendMessage(true)">弱网幂等重发测试</button>
+            </div>
+            <div class="composer-row">
+                <textarea class="composer-input" id="msgInput" rows="1" placeholder="输入消息，Enter 发送，Shift + Enter 换行..." oninput="autoResizeInput()" onkeydown="onComposerKeydown(event)"></textarea>
+                <button class="btn btn-primary" style="height:42px;padding:0 20px;" onclick="sendMessage(false)">发送</button>
+            </div>
+        </footer>
+    </main>
+
+    <!-- 右栏：AI 可观测性指标与群提醒面板 -->
+    <aside class="inspector" id="inspectorPane">
+        <div class="inspector-head">
+            <span>AI 观测与群提醒</span>
+            <button class="btn btn-ghost btn-xs" onclick="loadAgentMetrics()">刷新</button>
         </div>
-        <div class="msg-list" id="msgList"></div>
-        <div class="composer">
-            <button class="btn btn-sm btn-ai" title="快速插入 @AI 触发 AI 助手" onclick="insertAtAi()">@AI</button>
-            <input id="msgInput" placeholder="输入消息... 或试试：@AI 总结刚才聊了什么 / @AI 建一个明早10点周会提醒" onkeydown="if(event.key==='Enter') sendMessage(false)" />
-            <button class="btn btn-sm btn-warn" title="用相同 clientMsgId 连发两次验证服务端幂等去重" onclick="sendMessage(true)">重发幂等</button>
-            <button class="btn btn-sm" style="padding:0 18px;font-size:14px;" onclick="sendMessage(false)">发送</button>
+        <div class="inspector-body">
+            <div class="panel-section">
+                <h4>当前会话 Agent 指标</h4>
+                <div class="stat-grid">
+                    <div class="stat-box">
+                        <div class="stat-val" id="statTotalTasks">0</div>
+                        <div class="stat-label">累计任务</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val" id="statAvgTtft">-</div>
+                        <div class="stat-label">平均首字延迟</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val" id="statAvgTotal">-</div>
+                        <div class="stat-label">平均总耗时</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val" id="statTokens">0</div>
+                        <div class="stat-label">估算 Token 消耗</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-section">
+                <h4>近期 Agent 执行轨迹</h4>
+                <div id="recentTaskList"><div class="muted-empty">选择会话后查看执行记录</div></div>
+            </div>
+
+            <div class="panel-section">
+                <h4>审批落库的群提醒</h4>
+                <div id="reminderList"><div class="muted-empty">暂无审批创建的群提醒</div></div>
+            </div>
         </div>
-    </div>
+    </aside>
 </div>
 
+<!-- 建群弹窗 -->
 <div class="modal-mask" id="groupModal">
     <div class="modal-box">
         <h3>创建群聊</h3>
         <div class="field">
-            <label>群名称</label>
-            <input id="groupTitleInput" placeholder="如：技术交流群" value="技术交流群" />
+            <label for="groupTitleInput">群名称</label>
+            <input class="input" id="groupTitleInput" placeholder="例如：核心架构讨论群" value="技术交流群" />
         </div>
-        <div style="font-size:12px;color:#94a3b8;">勾选要拉入的成员：</div>
+        <div style="font-size:12.5px;color:var(--ink-secondary);">勾选要邀请的成员</div>
         <div class="member-picker" id="groupMemberList"></div>
         <div class="modal-actions">
-            <button class="btn btn-sm btn-secondary" onclick="closeGroupModal()">取消</button>
-            <button class="btn btn-sm" onclick="submitCreateGroup()">确认建群</button>
+            <button class="btn btn-ghost" onclick="closeGroupModal()">取消</button>
+            <button class="btn btn-primary" onclick="submitCreateGroup()">创建群聊</button>
         </div>
     </div>
 </div>
 
-<script>
-    const API_BASE = '';
-    const AI_USER_ID = '10000';
-    let wsUrl = sessionStorage.getItem('im_ws_url') || 'ws://127.0.0.1:9001/ws';
-    let authMode = 'login';
-    let token = sessionStorage.getItem('im_token') || '';
-    let currentUser = JSON.parse(sessionStorage.getItem('im_user') || 'null');
-    let ws = null;
-    let heartbeatTimer = null;
-    let reconnectTimer = null;
-    let reconnectAttempt = 0;
-    let manualOffline = false;
-    let hasConnectedOnce = false;
-
-    let activeConvId = null;
-    const convMaxSeqMap = new Map();
-    const renderedClientMsgIds = new Map();
-    const renderedSeqSet = new Set();
-    const activeAgentStreams = new Map(); // taskId -> { rowEl, statusEl, textEl, stopBtn, ackEl, buffer }
-
-    function switchTab(mode) {
-        authMode = mode;
-        document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
-        document.getElementById('tabReg').classList.toggle('active', mode === 'register');
-        document.getElementById('nicknameField').style.display = mode === 'register' ? 'block' : 'none';
-        document.getElementById('authErr').innerText = '';
-    }
-
-    async function api(path, options = {}) {
-        const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        const res = await fetch(API_BASE + path, { ...options, headers });
-        const json = await res.json();
-        if (json.code !== 200) throw new Error(json.message || '请求失败');
-        return json.data;
-    }
-
-    async function submitAuth() {
-        const username = document.getElementById('username').value.trim();
-        const password = document.getElementById('password').value;
-        const nickname = document.getElementById('nickname').value.trim();
-        try {
-            const data = authMode === 'login'
-                ? await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
-                : await api('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password, nickname }) });
-            token = data.token;
-            currentUser = data.user;
-            sessionStorage.setItem('im_token', token);
-            sessionStorage.setItem('im_user', JSON.stringify(currentUser));
-            enterApp();
-        } catch (e) {
-            document.getElementById('authErr').innerText = e.message;
-        }
-    }
-
-    function logout() {
-        manualOffline = true;
-        clearTimeout(reconnectTimer);
-        clearInterval(heartbeatTimer);
-        if (ws) ws.close();
-        sessionStorage.clear();
-        location.reload();
-    }
-
-    function enterApp() {
-        document.getElementById('authCard').style.display = 'none';
-        document.getElementById('app').style.display = 'flex';
-        document.getElementById('meNickname').innerText = `${currentUser.nickname} (ID:${currentUser.id})`;
-        document.getElementById('gwSelect').value = wsUrl;
-        loadConversations();
-        connectWs();
-    }
-
-    function setWsUi(state, text) {
-        const dot = document.getElementById('wsDot');
-        dot.className = 'dot' + (state ? ' ' + state : '');
-        document.getElementById('wsText').innerText = text;
-    }
-
-    function switchGateway() {
-        wsUrl = document.getElementById('gwSelect').value;
-        sessionStorage.setItem('im_ws_url', wsUrl);
-        manualOffline = false;
-        document.getElementById('toggleNetBtn').innerText = '模拟断网';
-        clearTimeout(reconnectTimer);
-        reconnectAttempt = 0;
-        if (ws) ws.close();
-        connectWs();
-    }
-
-    function toggleManualOffline() {
-        const btn = document.getElementById('toggleNetBtn');
-        if (!manualOffline) {
-            manualOffline = true;
-            clearTimeout(reconnectTimer);
-            clearInterval(heartbeatTimer);
-            if (ws) ws.close();
-            setWsUi('', '已手动断网（可测试离线补齐）');
-            btn.innerText = '恢复联网';
-        } else {
-            manualOffline = false;
-            btn.innerText = '模拟断网';
-            reconnectAttempt = 0;
-            connectWs();
-        }
-    }
-
-    function connectWs() {
-        if (manualOffline) return;
-        const portLabel = wsUrl.includes('9002') ? '9002' : '9001';
-        setWsUi('reconnecting', `正在连接 (${portLabel})...`);
-        ws = new WebSocket(`${wsUrl}?token=${encodeURIComponent(token)}`);
-
-        ws.onopen = async () => {
-            const isReconnect = hasConnectedOnce;
-            hasConnectedOnce = true;
-            reconnectAttempt = 0;
-            setWsUi('on', `WS 已连接 (${portLabel})`);
-            clearInterval(heartbeatTimer);
-            heartbeatTimer = setInterval(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: 'PING', requestId: 'hb-' + Date.now(), timestamp: Date.now(), data: {} }));
-                }
-            }, 25000);
-
-            if (isReconnect) {
-                await syncActiveConversationAfterReconnect();
-                loadConversations();
-            }
-        };
-
-        ws.onclose = () => {
-            clearInterval(heartbeatTimer);
-            if (manualOffline) return;
-            const delaySec = Math.min(15, Math.pow(2, reconnectAttempt));
-            reconnectAttempt++;
-            setWsUi('reconnecting', `已断开，${delaySec}s 后自动重连...`);
-            clearTimeout(reconnectTimer);
-            reconnectTimer = setTimeout(connectWs, delaySec * 1000);
-        };
-
-        ws.onmessage = (event) => {
-            const pkt = JSON.parse(event.data);
-            if (pkt.type === 'CHAT_PUSH') {
-                onChatPush(pkt.data);
-            } else if (pkt.type === 'SERVER_ACK') {
-                onServerAck(pkt.data);
-            } else if (pkt.type === 'AGENT_STREAM') {
-                onAgentStream(pkt.data);
-            } else if (pkt.type === 'AGENT_APPROVAL_CARD') {
-                onAgentApprovalCard(pkt.data);
-            } else if (pkt.type === 'ERROR') {
-                alert('错误: ' + pkt.data.message);
-            }
-        };
-    }
-
-    async function syncActiveConversationAfterReconnect() {
-        if (!activeConvId) return;
-        const afterSeq = convMaxSeqMap.get(activeConvId) || 0;
-        try {
-            const missed = await api(`/api/messages/sync?conversationId=${encodeURIComponent(activeConvId)}&afterSeq=${afterSeq}&limit=100`);
-            let added = 0;
-            missed.forEach(m => {
-                if (appendOrMergeMessage(m)) added++;
-            });
-            if (added > 0) {
-                const maxSeq = convMaxSeqMap.get(activeConvId) || afterSeq;
-                sendMsgAck(activeConvId, maxSeq);
-                document.getElementById('chatSeqInfo').innerText = `重连成功，已增量同步 ${added} 条离线消息 (最新 #${maxSeq})`;
-                scrollToBottom();
-            } else {
-                document.getElementById('chatSeqInfo').innerText = `重连成功，消息已是最新 (#${afterSeq})`;
-            }
-        } catch (e) {
-            console.error('重连增量同步失败:', e);
-        }
-    }
-
-    function sendMsgAck(convId, seq) {
-        if (!convId || !seq || seq <= 0) return;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'MSG_ACK',
-                requestId: 'ack-' + Date.now(),
-                timestamp: Date.now(),
-                data: { conversationId: String(convId), seq }
-            }));
-        } else {
-            api(`/api/messages/ack?conversationId=${encodeURIComponent(convId)}&seq=${seq}`, { method: 'POST' }).catch(() => {});
-        }
-    }
-
-    function insertAtAi() {
-        const input = document.getElementById('msgInput');
-        if (!input.value.startsWith('@AI')) {
-            input.value = '@AI ' + input.value;
-        }
-        input.focus();
-    }
-
-    function onAgentStream(data) {
-        if (String(data.conversationId) !== String(activeConvId)) {
-            if (data.stage === 'done' || data.stage === 'aborted') {
-                loadConversations();
-            }
-            return;
-        }
-        const taskId = String(data.taskId);
-        let holder = activeAgentStreams.get(taskId);
-        if (!holder) {
-            holder = createAgentStreamBubble(taskId, data.conversationId);
-            activeAgentStreams.set(taskId, holder);
-        }
-
-        if (data.stage === 'thinking') {
-            holder.statusEl.innerText = 'AI 正在思考...';
-        } else if (data.stage === 'tool_call') {
-            holder.statusEl.innerText = `🔧 正在调用工具: ${data.toolName || ''}`;
-        } else if (data.stage === 'delta') {
-            holder.statusEl.innerText = '正在流式生成中...';
-            holder.buffer += (data.delta || '');
-            holder.textEl.innerText = holder.buffer;
-        } else if (data.stage === 'done' || data.stage === 'aborted') {
-            holder.stopBtn.style.display = 'none';
-            holder.statusEl.innerText = data.stage === 'aborted' ? '已主动中止生成' : '生成完成';
-            if (data.seq) {
-                renderedSeqSet.add(data.seq);
-                const prev = convMaxSeqMap.get(activeConvId) || 0;
-                if (data.seq > prev) convMaxSeqMap.set(activeConvId, data.seq);
-                sendMsgAck(activeConvId, data.seq);
-                holder.ackEl.className = 'msg-ack ' + (data.stage === 'aborted' ? 'aborted' : 'ok');
-                holder.ackEl.innerText = (data.stage === 'aborted' ? '已中止 ' : '✓ ') + `#${data.seq}`;
-            }
-            activeAgentStreams.delete(taskId);
-            setTimeout(loadConversations, 150);
-        } else if (data.stage === 'error') {
-            holder.stopBtn.style.display = 'none';
-            holder.statusEl.innerText = '执行异常';
-            holder.textEl.innerText = data.errorMessage || 'AI 助手处理异常';
-            activeAgentStreams.delete(taskId);
-        }
-        scrollToBottom();
-    }
-
-    function createAgentStreamBubble(taskId, convId) {
-        const rowEl = document.createElement('div');
-        rowEl.className = 'msg-row ai';
-        const timeStr = new Date().toLocaleTimeString();
-        rowEl.innerHTML = `
-            <div class="msg-meta"><span class="ai-tag">AI 助手</span><span>${timeStr}</span></div>
-            <div class="msg-bubble">
-                <div class="stream-status">
-                    <span class="js-status">AI 正在思考...</span>
-                    <button class="btn btn-sm btn-danger js-stop" style="padding:2px 8px;font-size:11px;">⏹ 停止生成</button>
-                </div>
-                <div class="js-text"></div>
-            </div>
-            <div class="msg-ack">流式推送中...</div>
-        `;
-        const statusEl = rowEl.querySelector('.js-status');
-        const textEl = rowEl.querySelector('.js-text');
-        const stopBtn = rowEl.querySelector('.js-stop');
-        const ackEl = rowEl.querySelector('.msg-ack');
-
-        stopBtn.onclick = () => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
-            stopBtn.disabled = true;
-            stopBtn.innerText = '正在中止...';
-            ws.send(JSON.stringify({
-                type: 'AGENT_CANCEL',
-                requestId: 'cancel-' + Date.now(),
-                timestamp: Date.now(),
-                data: { taskId: String(taskId), conversationId: String(convId) }
-            }));
-        };
-
-        document.getElementById('msgList').appendChild(rowEl);
-        return { rowEl, statusEl, textEl, stopBtn, ackEl, buffer: '' };
-    }
-
-    function onAgentApprovalCard(card) {
-        if (String(card.conversationId) !== String(activeConvId)) {
-            loadConversations();
-            return;
-        }
-        const taskId = String(card.taskId);
-        const holder = activeAgentStreams.get(taskId);
-        if (holder) {
-            holder.statusEl.innerText = '⏸ 已挂起，等待会话成员审批确认...';
-            holder.stopBtn.style.display = 'none';
-        }
-
-        const el = document.createElement('div');
-        el.className = 'approval-card';
-        const expireStr = new Date(card.expireAt).toLocaleTimeString();
-        el.innerHTML = `
-            <div class="approval-title">⚠️ 人机协同审批（写操作确认）</div>
-            <div class="approval-summary">${escapeHtml(card.summary)}<br/><span style="font-size:11px;color:#fcd34d;">工具：${escapeHtml(card.actionName)} · 有效期至 ${expireStr}</span></div>
-            <div class="approval-actions">
-                <button class="btn btn-sm btn-success js-approve">✅ 同意执行</button>
-                <button class="btn btn-sm btn-danger js-reject">❌ 拒绝</button>
-                <span class="approval-result js-res"></span>
-            </div>
-        `;
-        const approveBtn = el.querySelector('.js-approve');
-        const rejectBtn = el.querySelector('.js-reject');
-        const resEl = el.querySelector('.js-res');
-
-        const sendDecision = (approved) => {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return alert('WebSocket 未连接');
-            approveBtn.disabled = true;
-            rejectBtn.disabled = true;
-            resEl.innerText = approved ? '已提交【同意】，正在唤醒 AI 继续执行...' : '已提交【拒绝】...';
-            ws.send(JSON.stringify({
-                type: 'AGENT_APPROVAL',
-                requestId: 'appr-' + Date.now(),
-                timestamp: Date.now(),
-                data: {
-                    taskId: String(card.taskId),
-                    approvalId: String(card.approvalId),
-                    approved,
-                    comment: approved ? '前端确认通过' : '前端拒绝执行'
-                }
-            }));
-        };
-        approveBtn.onclick = () => sendDecision(true);
-        rejectBtn.onclick = () => sendDecision(false);
-
-        document.getElementById('msgList').appendChild(el);
-        scrollToBottom();
-    }
-
-    async function searchUsers() {
-        try {
-            const kw = document.getElementById('searchInput').value.trim();
-            const users = await api('/api/users/search?keyword=' + encodeURIComponent(kw));
-            const box = document.getElementById('userResults');
-            box.style.display = 'block';
-            box.innerHTML = users.length === 0 ? '<div class="user-item">未找到用户</div>' : users.map(u => `
-                <div class="user-item">
-                    <span>${escapeHtml(u.nickname)} (@${escapeHtml(u.username)})</span>
-                    <button class="btn btn-sm" onclick="startDirect('${u.id}')">发消息</button>
-                </div>
-            `).join('');
-        } catch (e) {
-            alert('搜索失败: ' + e.message);
-        }
-    }
-
-    async function startDirect(targetUserId) {
-        try {
-            const conv = await api('/api/conversations/direct', { method: 'POST', body: JSON.stringify({ targetUserId: String(targetUserId) }) });
-            document.getElementById('userResults').style.display = 'none';
-            await loadConversations();
-            selectConversation(String(conv.id), conv.title);
-        } catch (e) {
-            alert('发起单聊失败: ' + e.message);
-        }
-    }
-
-    async function createGroupPrompt() {
-        try {
-            const users = await api('/api/users/search?keyword=');
-            const listEl = document.getElementById('groupMemberList');
-            if (users.length === 0) return alert('当前还没有其他已注册用户，请先注册另一个账号');
-            listEl.innerHTML = users.map(u => `
-                <label class="member-opt">
-                    <input type="checkbox" value="${u.id}" />
-                    <span>${escapeHtml(u.nickname)} (@${escapeHtml(u.username)})</span>
-                </label>
-            `).join('');
-            document.getElementById('groupModal').classList.add('show');
-        } catch (e) {
-            alert('加载成员列表失败: ' + e.message);
-        }
-    }
-
-    function closeGroupModal() {
-        document.getElementById('groupModal').classList.remove('show');
-    }
-
-    async function submitCreateGroup() {
-        try {
-            const title = document.getElementById('groupTitleInput').value.trim();
-            if (!title) return alert('请输入群名称');
-            const memberIds = Array.from(document.querySelectorAll('#groupMemberList input[type="checkbox"]:checked')).map(el => el.value);
-            if (memberIds.length === 0) return alert('请至少勾选一名群成员');
-            const conv = await api('/api/conversations/group', { method: 'POST', body: JSON.stringify({ title, memberIds }) });
-            closeGroupModal();
-            await loadConversations();
-            selectConversation(String(conv.id), conv.title);
-        } catch (e) {
-            alert('建群失败: ' + e.message);
-        }
-    }
-
-    async function loadConversations() {
-        try {
-            const list = await api('/api/conversations');
-            document.getElementById('convList').innerHTML = list.map(c => {
-                const unread = Number(c.unreadCount || 0);
-                const badgeHtml = unread > 0 ? `<span class="badge">${unread > 99 ? '99+' : unread}</span>` : `<span style="font-size:11px;color:#64748b;">#${c.currentSeq || 0}</span>`;
-                return `
-                    <div class="conv-item ${String(c.id) === String(activeConvId) ? 'active' : ''}" onclick="selectConversation('${c.id}', '${escapeHtml(c.title).replace(/'/g, "\\'")}')">
-                        <div class="conv-title">
-                            <span>${c.type === 2 ? '[群] ' : ''}${escapeHtml(c.title)}</span>
-                            ${badgeHtml}
-                        </div>
-                        <div class="conv-preview">${escapeHtml(c.lastMsgPreview || '暂无消息')}</div>
-                    </div>
-                `;
-            }).join('');
-        } catch (e) {
-            console.error('加载会话列表失败:', e);
-        }
-    }
-
-    async function selectConversation(convId, title) {
-        try {
-            activeConvId = String(convId);
-            document.getElementById('chatTitle').innerText = title;
-            const history = await api(`/api/messages/history?conversationId=${encodeURIComponent(activeConvId)}&limit=50`);
-            const msgList = document.getElementById('msgList');
-            msgList.innerHTML = '';
-            renderedClientMsgIds.clear();
-            renderedSeqSet.clear();
-            activeAgentStreams.clear();
-            let maxSeq = 0;
-            history.forEach(m => {
-                appendOrMergeMessage(m);
-                if (m.seq > maxSeq) maxSeq = m.seq;
-            });
-            convMaxSeqMap.set(activeConvId, maxSeq);
-            if (maxSeq > 0) {
-                sendMsgAck(activeConvId, maxSeq);
-                document.getElementById('chatSeqInfo').innerText = `已同步至 #${maxSeq}`;
-            } else {
-                document.getElementById('chatSeqInfo').innerText = '';
-            }
-            scrollToBottom();
-            setTimeout(loadConversations, 150);
-        } catch (e) {
-            alert('加载会话历史失败: ' + e.message);
-        }
-    }
-
-    function sendMessage(duplicateTest) {
-        if (!activeConvId) return alert('请先在左侧选择或发起一个会话');
-        const input = document.getElementById('msgInput');
-        const content = input.value.trim() || (duplicateTest ? '幂等重发测试消息' : '');
-        if (!content) return;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return alert('WebSocket 未连接，请先恢复联网或确认网关已启动');
-
-        const clientMsgId = 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-        const mentionAgent = content.toLowerCase().includes('@ai');
-        const pkt = {
-            type: 'CHAT_SEND',
-            requestId: clientMsgId,
-            timestamp: Date.now(),
-            data: { conversationId: String(activeConvId), clientMsgId, msgType: 'TEXT', content, mentionAgent }
-        };
-
-        renderOptimisticMessage({
-            clientMsgId,
-            senderId: currentUser.id,
-            senderNickname: currentUser.nickname,
-            content,
-            createdAt: Date.now()
-        });
-        scrollToBottom();
-
-        ws.send(JSON.stringify(pkt));
-        if (duplicateTest) {
-            ws.send(JSON.stringify(pkt));
-            document.getElementById('chatSeqInfo').innerText = `已连发 2 次相同 clientMsgId (${clientMsgId})，观察服务端幂等去重...`;
-        }
-        input.value = '';
-    }
-
-    function renderOptimisticMessage(msg) {
-        const el = document.createElement('div');
-        el.className = 'msg-row mine';
-        el.dataset.clientMsgId = msg.clientMsgId;
-        const timeStr = new Date(msg.createdAt).toLocaleTimeString();
-        el.innerHTML = `
-            <div class="msg-meta">${escapeHtml(msg.senderNickname)} · ${timeStr}</div>
-            <div class="msg-bubble">${escapeHtml(msg.content)}</div>
-            <div class="msg-ack pending">发送中...</div>
-        `;
-        document.getElementById('msgList').appendChild(el);
-        renderedClientMsgIds.set(msg.clientMsgId, el);
-    }
-
-    function onServerAck(ack) {
-        const el = renderedClientMsgIds.get(ack.clientMsgId);
-        if (el) {
-            const ackEl = el.querySelector('.msg-ack');
-            ackEl.className = 'msg-ack ok';
-            ackEl.innerText = `✓ 已送达 #${ack.seq}`;
-            renderedSeqSet.add(ack.seq);
-        }
-        if (String(ack.conversationId) === String(activeConvId)) {
-            const prev = convMaxSeqMap.get(activeConvId) || 0;
-            if (ack.seq > prev) convMaxSeqMap.set(activeConvId, ack.seq);
-            document.getElementById('chatSeqInfo').innerText = `SERVER_ACK 确认 #${ack.seq}`;
-        }
-    }
-
-    function onChatPush(msg) {
-        if (String(msg.conversationId) === String(activeConvId)) {
-            appendOrMergeMessage(msg);
-            const prev = convMaxSeqMap.get(activeConvId) || 0;
-            if (msg.seq > prev) convMaxSeqMap.set(activeConvId, msg.seq);
-            sendMsgAck(activeConvId, msg.seq);
-            scrollToBottom();
-            setTimeout(loadConversations, 150);
-        } else {
-            loadConversations();
-        }
-    }
-
-    function appendOrMergeMessage(msg) {
-        if (msg.clientMsgId && renderedClientMsgIds.has(msg.clientMsgId)) {
-            const existingEl = renderedClientMsgIds.get(msg.clientMsgId);
-            const ackEl = existingEl.querySelector('.msg-ack');
-            ackEl.className = 'msg-ack ok';
-            ackEl.innerText = `✓ 已送达 #${msg.seq}`;
-            if (msg.seq) renderedSeqSet.add(msg.seq);
-            return false;
-        }
-        if (msg.seq && renderedSeqSet.has(msg.seq)) {
-            return false;
-        }
-        const isMine = String(msg.senderId) === String(currentUser.id);
-        const isAi = String(msg.senderId) === AI_USER_ID || msg.msgType === 'AGENT_TEXT';
-        const el = document.createElement('div');
-        el.className = 'msg-row ' + (isMine ? 'mine' : (isAi ? 'ai' : ''));
-        const timeStr = new Date(msg.createdAt).toLocaleTimeString();
-        const metaHtml = isAi
-            ? `<span class="ai-tag">AI 助手</span><span>${timeStr}</span>`
-            : `${escapeHtml(msg.senderNickname)} · ${timeStr}`;
-        el.innerHTML = `
-            <div class="msg-meta">${metaHtml}</div>
-            <div class="msg-bubble">${escapeHtml(msg.content)}</div>
-            <div class="msg-ack ${isMine ? 'ok' : ''}">${isMine ? '✓ ' : ''}#${msg.seq}</div>
-        `;
-        document.getElementById('msgList').appendChild(el);
-        if (msg.clientMsgId) renderedClientMsgIds.set(msg.clientMsgId, el);
-        if (msg.seq) renderedSeqSet.add(msg.seq);
-        if (String(msg.conversationId) === String(activeConvId)) {
-            const prev = convMaxSeqMap.get(activeConvId) || 0;
-            if (msg.seq > prev) convMaxSeqMap.set(activeConvId, msg.seq);
-        }
-        return true;
-    }
-
-    function scrollToBottom() {
-        const msgList = document.getElementById('msgList');
-        msgList.scrollTop = msgList.scrollHeight;
-    }
-
-    function escapeHtml(str) {
-        return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
-    }
-
-    if (token && currentUser) enterApp();
-</script>
+<script src="/app.js"></script>
 </body>
 </html>

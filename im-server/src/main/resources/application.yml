@@ -1,5 +1,8 @@
 server:
   port: ${SERVER_PORT:8080}
+  tomcat:
+    accept-count: 1000
+    max-connections: 8192
 
 spring:
   application:
@@ -10,10 +13,15 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:im_agent_chat}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:im_agent_chat}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048&useServerPrepStmts=true
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:your_mysql_password}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 40
+      minimum-idle: 16
+      connection-timeout: 10000
+      idle-timeout: 300000
   data:
     redis:
       host: ${REDIS_HOST:127.0.0.1}
@@ -24,6 +32,9 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USER:im_admin}
     password: ${RABBITMQ_PASSWORD:im_mq_123456}
+    cache:
+      channel:
+        size: 64
 
 mybatis-plus:
   configuration:
@@ -39,3 +50,10 @@ im:
   security:
     jwt-secret: ${JWT_SECRET:im-agent-local-dev-jwt-secret-key-32bytes!}
     jwt-expire-seconds: 604800
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    chat-bucket-capacity: ${CHAT_RL_CAPACITY:30}
+    chat-refill-per-second: ${CHAT_RL_REFILL:8.0}
+    agent-bucket-capacity: ${AGENT_RL_CAPACITY:5}
+    agent-refill-per-second: ${AGENT_RL_REFILL:0.2}
+    agent-daily-quota: ${AGENT_DAILY_QUOTA:100}

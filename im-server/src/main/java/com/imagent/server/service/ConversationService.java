@@ -1,6 +1,7 @@
 package com.imagent.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.imagent.common.constant.RedisKeys;
 import com.imagent.common.model.BizException;
 import com.imagent.common.model.ErrorCode;
 import com.imagent.server.dto.ConversationVO;
@@ -12,9 +13,11 @@ import com.imagent.server.mapper.ImConversationMapper;
 import com.imagent.server.mapper.ImConversationMemberMapper;
 import com.imagent.server.mapper.ImUserMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,10 +31,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ConversationService {
 
+    private static final Duration MEMBERS_CACHE_TTL = Duration.ofMinutes(10);
+
     private final ImConversationMapper conversationMapper;
     private final ImConversationMemberMapper memberMapper;
     private final ImUserMapper userMapper;
     private final UnreadService unreadService;
+    private final StringRedisTemplate redisTemplate;
 
     @Transactional(rollbackFor = Exception.class)
     public ConversationVO createOrGetDirectConversation(Long currentUserId, Long targetUserId) {
@@ -63,6 +69,7 @@ public class ConversationService {
 
         addMember(conv.getId(), currentUserId, 1);
         addMember(conv.getId(), targetUserId, 1);
+        redisTemplate.delete(RedisKeys.conversationMembers(conv.getId()));
         return toVO(conv, targetUser.getNickname());
     }
 
@@ -90,6 +97,7 @@ public class ConversationService {
         for (Long memberId : uniqueMembers) {
             addMember(conv.getId(), memberId, 1);
         }
+        redisTemplate.delete(RedisKeys.conversationMembers(conv.getId()));
         return toVO(conv, conv.getTitle());
     }
 
@@ -135,17 +143,29 @@ public class ConversationService {
     }
 
     public boolean isMember(Long conversationId, Long userId) {
-        return memberMapper.selectCount(new LambdaQueryWrapper<ImConversationMember>()
-                .eq(ImConversationMember::getConversationId, conversationId)
-                .eq(ImConversationMember::getUserId, userId)) > 0;
+        return listMemberIds(conversationId).contains(userId);
     }
 
+    /**
+     * 热路径会话成员查询（Redis Set Cache-Aside，将高频校验与群推送成员查询从 MySQL 卸载至 Redis）
+     */
     public List<Long> listMemberIds(Long conversationId) {
-        return memberMapper.selectList(new LambdaQueryWrapper<ImConversationMember>()
+        String key = RedisKeys.conversationMembers(conversationId);
+        Set<String> cached = redisTemplate.opsForSet().members(key);
+        if (cached != null && !cached.isEmpty()) {
+            return cached.stream().map(Long::valueOf).toList();
+        }
+        List<Long> dbMembers = memberMapper.selectList(new LambdaQueryWrapper<ImConversationMember>()
                         .eq(ImConversationMember::getConversationId, conversationId))
                 .stream()
                 .map(ImConversationMember::getUserId)
                 .toList();
+        if (!dbMembers.isEmpty()) {
+            String[] values = dbMembers.stream().map(String::valueOf).toArray(String[]::new);
+            redisTemplate.opsForSet().add(key, values);
+            redisTemplate.expire(key, MEMBERS_CACHE_TTL);
+        }
+        return dbMembers;
     }
 
     private Map<Long, String> resolveDirectTitles(List<Long> directConvIds, Long currentUserId) {

@@ -1,6 +1,7 @@
 package com.imagent.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.imagent.common.constant.RedisKeys;
 import com.imagent.common.model.BizException;
 import com.imagent.common.model.ErrorCode;
 import com.imagent.common.security.JwtTokenUtil;
@@ -11,18 +12,23 @@ import com.imagent.server.dto.UserProfileVO;
 import com.imagent.server.entity.ImUser;
 import com.imagent.server.mapper.ImUserMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class UserService {
 
+    private static final Duration NICKNAME_CACHE_TTL = Duration.ofMinutes(30);
+
     private final ImUserMapper userMapper;
     private final BCryptPasswordEncoder passwordEncoder;
     private final JwtTokenUtil jwtTokenUtil;
+    private final StringRedisTemplate redisTemplate;
 
     public AuthResponse register(RegisterRequest req) {
         Long count = userMapper.selectCount(new LambdaQueryWrapper<ImUser>()
@@ -73,6 +79,21 @@ public class UserService {
             throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
         }
         return toVO(user);
+    }
+
+    /**
+     * 热路径昵称查询（Redis Cache-Aside，避免每条消息回源查 im_user 表）
+     */
+    public String getNicknameCached(Long userId) {
+        String key = RedisKeys.userNickname(userId);
+        String cached = redisTemplate.opsForValue().get(key);
+        if (cached != null) {
+            return cached;
+        }
+        ImUser user = userMapper.selectById(userId);
+        String nickname = (user != null && user.getNickname() != null) ? user.getNickname() : ("用户" + userId);
+        redisTemplate.opsForValue().set(key, nickname, NICKNAME_CACHE_TTL);
+        return nickname;
     }
 
     public List<UserProfileVO> searchUsers(String keyword, Long excludeUserId) {

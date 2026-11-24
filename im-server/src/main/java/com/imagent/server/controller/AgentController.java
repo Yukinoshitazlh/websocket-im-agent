@@ -2,6 +2,7 @@ package com.imagent.server.controller;
 
 import com.imagent.common.model.Result;
 import com.imagent.server.common.UserContext;
+import com.imagent.server.dto.AgentMetricsVO;
 import com.imagent.server.entity.ImAgentTask;
 import com.imagent.server.entity.ImGroupReminder;
 import com.imagent.server.service.AgentBridgeService;
@@ -31,5 +32,10 @@ public class AgentController {
     @GetMapping("/reminders")
     public Result<List<ImGroupReminder>> reminders(@RequestParam Long conversationId) {
         return Result.ok(agentBridgeService.listGroupReminders(UserContext.getUserId(), conversationId));
+    }
+
+    @GetMapping("/metrics")
+    public Result<AgentMetricsVO> metrics(@RequestParam Long conversationId) {
+        return Result.ok(agentBridgeService.getConversationMetrics(UserContext.getUserId(), conversationId));
     }
 }

@@ -48,13 +48,28 @@ public final class RedisKeys {
         return "im:agent:cancel:" + taskId;
     }
 
+    /** 会话成员缓存 Set：im:conv:members:{conversationId} */
+    public static String conversationMembers(Long conversationId) {
+        return "im:conv:members:" + conversationId;
+    }
+
+    /** 用户昵称缓存：im:user:nick:{userId} */
+    public static String userNickname(Long userId) {
+        return "im:user:nick:" + userId;
+    }
+
     /** 普通消息发送限流键 */
     public static String chatRateLimit(Long userId) {
         return "im:rl:chat:" + userId;
     }
 
-    /** Agent 调用配额/限流键 */
+    /** Agent 短周期令牌桶限流键 */
     public static String agentRateLimit(Long userId) {
         return "im:rl:agent:" + userId;
+    }
+
+    /** Agent 每日调用配额键 */
+    public static String agentDailyQuota(Long userId, String yyyyMMdd) {
+        return "im:rl:agent:daily:" + userId + ":" + yyyyMMdd;
     }
 }
