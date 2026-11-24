@@ -40,3 +40,4 @@ im:
     max-steps: 5
     step-timeout-seconds: 30
     qdrant-url: ${QDRANT_URL:http://127.0.0.1:6333}
+    server-base-url: ${IM_SERVER_URL:http://127.0.0.1:8080}

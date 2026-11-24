@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebSocket IM + AI Agent 联调台 (阶段 2 可靠底座)</title>
+    <title>WebSocket IM + AI Agent 联调台 (阶段 3 Agent 融合)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -22,9 +22,16 @@
         .btn-secondary:hover { background: #64748b; }
         .btn-warn { background: #d97706; }
         .btn-warn:hover { background: #b45309; }
+        .btn-ai { background: #0d9488; }
+        .btn-ai:hover { background: #0f766e; }
+        .btn-danger { background: #dc2626; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-success { background: #16a34a; }
+        .btn-success:hover { background: #15803d; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .err { color: #f87171; font-size: 12px; margin-top: 8px; min-height: 16px; text-align: center; }
 
-        .app { display: none; width: 1120px; height: 92vh; background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        .app { display: none; width: 1160px; height: 92vh; background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
         .sidebar { width: 330px; border-right: 1px solid #334155; display: flex; flex-direction: column; background: #162032; }
         .profile-bar { padding: 12px 14px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
         .ws-status { font-size: 12px; display: flex; align-items: center; gap: 6px; color: #94a3b8; margin-top: 4px; }
@@ -48,14 +55,25 @@
         .chat-header { padding: 12px 18px; border-bottom: 1px solid #334155; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
         .sync-banner { font-size: 12px; color: #38bdf8; }
         .msg-list { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
-        .msg-row { display: flex; flex-direction: column; max-width: 72%; }
+        .msg-row { display: flex; flex-direction: column; max-width: 76%; }
         .msg-row.mine { align-self: flex-end; align-items: flex-end; }
-        .msg-meta { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
-        .msg-bubble { padding: 10px 14px; border-radius: 10px; background: #334155; line-height: 1.45; font-size: 14px; word-break: break-word; }
+        .msg-meta { font-size: 11px; color: #94a3b8; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+        .ai-tag { background: #0d9488; color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 700; }
+        .msg-bubble { padding: 10px 14px; border-radius: 10px; background: #334155; line-height: 1.5; font-size: 14px; word-break: break-word; white-space: pre-wrap; }
         .msg-row.mine .msg-bubble { background: #2563eb; color: #fff; }
+        .msg-row.ai .msg-bubble { background: #132a2e; border: 1px solid #0d9488; color: #e2f8f5; }
+        .stream-status { font-size: 11px; color: #2dd4bf; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
         .msg-ack { font-size: 10px; color: #94a3b8; margin-top: 2px; }
         .msg-ack.pending { color: #f59e0b; }
         .msg-ack.ok { color: #22c55e; }
+        .msg-ack.aborted { color: #f87171; }
+
+        .approval-card { background: #292111; border: 1px solid #d97706; border-radius: 10px; padding: 14px; max-width: 78%; }
+        .approval-title { font-size: 13px; font-weight: 700; color: #fbbf24; margin-bottom: 6px; }
+        .approval-summary { font-size: 13px; color: #fef3c7; margin-bottom: 10px; line-height: 1.45; }
+        .approval-actions { display: flex; gap: 8px; align-items: center; }
+        .approval-result { font-size: 12px; color: #94a3b8; margin-left: 6px; }
+
         .composer { padding: 12px 18px; border-top: 1px solid #334155; display: flex; gap: 8px; }
         .composer input { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #fff; outline: none; }
 
@@ -125,8 +143,9 @@
         </div>
         <div class="msg-list" id="msgList"></div>
         <div class="composer">
-            <input id="msgInput" placeholder="输入消息并回车发送..." onkeydown="if(event.key==='Enter') sendMessage(false)" />
-            <button class="btn btn-sm btn-warn" title="用相同 clientMsgId 连发两次验证服务端幂等去重" onclick="sendMessage(true)">重发幂等测试</button>
+            <button class="btn btn-sm btn-ai" title="快速插入 @AI 触发 AI 助手" onclick="insertAtAi()">@AI</button>
+            <input id="msgInput" placeholder="输入消息... 或试试：@AI 总结刚才聊了什么 / @AI 建一个明早10点周会提醒" onkeydown="if(event.key==='Enter') sendMessage(false)" />
+            <button class="btn btn-sm btn-warn" title="用相同 clientMsgId 连发两次验证服务端幂等去重" onclick="sendMessage(true)">重发幂等</button>
             <button class="btn btn-sm" style="padding:0 18px;font-size:14px;" onclick="sendMessage(false)">发送</button>
         </div>
     </div>
@@ -150,6 +169,7 @@
 
 <script>
     const API_BASE = '';
+    const AI_USER_ID = '10000';
     let wsUrl = sessionStorage.getItem('im_ws_url') || 'ws://127.0.0.1:9001/ws';
     let authMode = 'login';
     let token = sessionStorage.getItem('im_token') || '';
@@ -165,6 +185,7 @@
     const convMaxSeqMap = new Map();
     const renderedClientMsgIds = new Map();
     const renderedSeqSet = new Set();
+    const activeAgentStreams = new Map(); // taskId -> { rowEl, statusEl, textEl, stopBtn, ackEl, buffer }
 
     function switchTab(mode) {
         authMode = mode;
@@ -280,7 +301,6 @@
         ws.onclose = () => {
             clearInterval(heartbeatTimer);
             if (manualOffline) return;
-            // 指数退避自动重连：1s -> 2s -> 4s -> 8s -> max 15s
             const delaySec = Math.min(15, Math.pow(2, reconnectAttempt));
             reconnectAttempt++;
             setWsUi('reconnecting', `已断开，${delaySec}s 后自动重连...`);
@@ -294,6 +314,10 @@
                 onChatPush(pkt.data);
             } else if (pkt.type === 'SERVER_ACK') {
                 onServerAck(pkt.data);
+            } else if (pkt.type === 'AGENT_STREAM') {
+                onAgentStream(pkt.data);
+            } else if (pkt.type === 'AGENT_APPROVAL_CARD') {
+                onAgentApprovalCard(pkt.data);
             } else if (pkt.type === 'ERROR') {
                 alert('错误: ' + pkt.data.message);
             }
@@ -334,6 +358,146 @@
         } else {
             api(`/api/messages/ack?conversationId=${encodeURIComponent(convId)}&seq=${seq}`, { method: 'POST' }).catch(() => {});
         }
+    }
+
+    function insertAtAi() {
+        const input = document.getElementById('msgInput');
+        if (!input.value.startsWith('@AI')) {
+            input.value = '@AI ' + input.value;
+        }
+        input.focus();
+    }
+
+    function onAgentStream(data) {
+        if (String(data.conversationId) !== String(activeConvId)) {
+            if (data.stage === 'done' || data.stage === 'aborted') {
+                loadConversations();
+            }
+            return;
+        }
+        const taskId = String(data.taskId);
+        let holder = activeAgentStreams.get(taskId);
+        if (!holder) {
+            holder = createAgentStreamBubble(taskId, data.conversationId);
+            activeAgentStreams.set(taskId, holder);
+        }
+
+        if (data.stage === 'thinking') {
+            holder.statusEl.innerText = 'AI 正在思考...';
+        } else if (data.stage === 'tool_call') {
+            holder.statusEl.innerText = `🔧 正在调用工具: ${data.toolName || ''}`;
+        } else if (data.stage === 'delta') {
+            holder.statusEl.innerText = '正在流式生成中...';
+            holder.buffer += (data.delta || '');
+            holder.textEl.innerText = holder.buffer;
+        } else if (data.stage === 'done' || data.stage === 'aborted') {
+            holder.stopBtn.style.display = 'none';
+            holder.statusEl.innerText = data.stage === 'aborted' ? '已主动中止生成' : '生成完成';
+            if (data.seq) {
+                renderedSeqSet.add(data.seq);
+                const prev = convMaxSeqMap.get(activeConvId) || 0;
+                if (data.seq > prev) convMaxSeqMap.set(activeConvId, data.seq);
+                sendMsgAck(activeConvId, data.seq);
+                holder.ackEl.className = 'msg-ack ' + (data.stage === 'aborted' ? 'aborted' : 'ok');
+                holder.ackEl.innerText = (data.stage === 'aborted' ? '已中止 ' : '✓ ') + `#${data.seq}`;
+            }
+            activeAgentStreams.delete(taskId);
+            setTimeout(loadConversations, 150);
+        } else if (data.stage === 'error') {
+            holder.stopBtn.style.display = 'none';
+            holder.statusEl.innerText = '执行异常';
+            holder.textEl.innerText = data.errorMessage || 'AI 助手处理异常';
+            activeAgentStreams.delete(taskId);
+        }
+        scrollToBottom();
+    }
+
+    function createAgentStreamBubble(taskId, convId) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'msg-row ai';
+        const timeStr = new Date().toLocaleTimeString();
+        rowEl.innerHTML = `
+            <div class="msg-meta"><span class="ai-tag">AI 助手</span><span>${timeStr}</span></div>
+            <div class="msg-bubble">
+                <div class="stream-status">
+                    <span class="js-status">AI 正在思考...</span>
+                    <button class="btn btn-sm btn-danger js-stop" style="padding:2px 8px;font-size:11px;">⏹ 停止生成</button>
+                </div>
+                <div class="js-text"></div>
+            </div>
+            <div class="msg-ack">流式推送中...</div>
+        `;
+        const statusEl = rowEl.querySelector('.js-status');
+        const textEl = rowEl.querySelector('.js-text');
+        const stopBtn = rowEl.querySelector('.js-stop');
+        const ackEl = rowEl.querySelector('.msg-ack');
+
+        stopBtn.onclick = () => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            stopBtn.disabled = true;
+            stopBtn.innerText = '正在中止...';
+            ws.send(JSON.stringify({
+                type: 'AGENT_CANCEL',
+                requestId: 'cancel-' + Date.now(),
+                timestamp: Date.now(),
+                data: { taskId: String(taskId), conversationId: String(convId) }
+            }));
+        };
+
+        document.getElementById('msgList').appendChild(rowEl);
+        return { rowEl, statusEl, textEl, stopBtn, ackEl, buffer: '' };
+    }
+
+    function onAgentApprovalCard(card) {
+        if (String(card.conversationId) !== String(activeConvId)) {
+            loadConversations();
+            return;
+        }
+        const taskId = String(card.taskId);
+        const holder = activeAgentStreams.get(taskId);
+        if (holder) {
+            holder.statusEl.innerText = '⏸ 已挂起，等待会话成员审批确认...';
+            holder.stopBtn.style.display = 'none';
+        }
+
+        const el = document.createElement('div');
+        el.className = 'approval-card';
+        const expireStr = new Date(card.expireAt).toLocaleTimeString();
+        el.innerHTML = `
+            <div class="approval-title">⚠️ 人机协同审批（写操作确认）</div>
+            <div class="approval-summary">${escapeHtml(card.summary)}<br/><span style="font-size:11px;color:#fcd34d;">工具：${escapeHtml(card.actionName)} · 有效期至 ${expireStr}</span></div>
+            <div class="approval-actions">
+                <button class="btn btn-sm btn-success js-approve">✅ 同意执行</button>
+                <button class="btn btn-sm btn-danger js-reject">❌ 拒绝</button>
+                <span class="approval-result js-res"></span>
+            </div>
+        `;
+        const approveBtn = el.querySelector('.js-approve');
+        const rejectBtn = el.querySelector('.js-reject');
+        const resEl = el.querySelector('.js-res');
+
+        const sendDecision = (approved) => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return alert('WebSocket 未连接');
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
+            resEl.innerText = approved ? '已提交【同意】，正在唤醒 AI 继续执行...' : '已提交【拒绝】...';
+            ws.send(JSON.stringify({
+                type: 'AGENT_APPROVAL',
+                requestId: 'appr-' + Date.now(),
+                timestamp: Date.now(),
+                data: {
+                    taskId: String(card.taskId),
+                    approvalId: String(card.approvalId),
+                    approved,
+                    comment: approved ? '前端确认通过' : '前端拒绝执行'
+                }
+            }));
+        };
+        approveBtn.onclick = () => sendDecision(true);
+        rejectBtn.onclick = () => sendDecision(false);
+
+        document.getElementById('msgList').appendChild(el);
+        scrollToBottom();
     }
 
     async function searchUsers() {
@@ -430,6 +594,7 @@
             msgList.innerHTML = '';
             renderedClientMsgIds.clear();
             renderedSeqSet.clear();
+            activeAgentStreams.clear();
             let maxSeq = 0;
             history.forEach(m => {
                 appendOrMergeMessage(m);
@@ -457,14 +622,14 @@
         if (!ws || ws.readyState !== WebSocket.OPEN) return alert('WebSocket 未连接，请先恢复联网或确认网关已启动');
 
         const clientMsgId = 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        const mentionAgent = content.toLowerCase().includes('@ai');
         const pkt = {
             type: 'CHAT_SEND',
             requestId: clientMsgId,
             timestamp: Date.now(),
-            data: { conversationId: String(activeConvId), clientMsgId, msgType: 'TEXT', content, mentionAgent: false }
+            data: { conversationId: String(activeConvId), clientMsgId, msgType: 'TEXT', content, mentionAgent }
         };
 
-        // 乐观更新：先立即上屏显示“发送中...”，收到 SERVER_ACK 后更新为已送达 #seq
         renderOptimisticMessage({
             clientMsgId,
             senderId: currentUser.id,
@@ -476,7 +641,6 @@
 
         ws.send(JSON.stringify(pkt));
         if (duplicateTest) {
-            // 故意以同一 clientMsgId 再发一次，验证服务端 Redis + MySQL 双重幂等去重
             ws.send(JSON.stringify(pkt));
             document.getElementById('chatSeqInfo').innerText = `已连发 2 次相同 clientMsgId (${clientMsgId})，观察服务端幂等去重...`;
         }
@@ -538,11 +702,15 @@
             return false;
         }
         const isMine = String(msg.senderId) === String(currentUser.id);
+        const isAi = String(msg.senderId) === AI_USER_ID || msg.msgType === 'AGENT_TEXT';
         const el = document.createElement('div');
-        el.className = 'msg-row ' + (isMine ? 'mine' : '');
+        el.className = 'msg-row ' + (isMine ? 'mine' : (isAi ? 'ai' : ''));
         const timeStr = new Date(msg.createdAt).toLocaleTimeString();
+        const metaHtml = isAi
+            ? `<span class="ai-tag">AI 助手</span><span>${timeStr}</span>`
+            : `${escapeHtml(msg.senderNickname)} · ${timeStr}`;
         el.innerHTML = `
-            <div class="msg-meta">${escapeHtml(msg.senderNickname)} · ${timeStr}</div>
+            <div class="msg-meta">${metaHtml}</div>
             <div class="msg-bubble">${escapeHtml(msg.content)}</div>
             <div class="msg-ack ${isMine ? 'ok' : ''}">${isMine ? '✓ ' : ''}#${msg.seq}</div>
         `;

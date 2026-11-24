@@ -15,4 +15,5 @@ public class AgentProperties {
     private int maxSteps = 5;
     private int stepTimeoutSeconds = 30;
     private String qdrantUrl = "http://127.0.0.1:6333";
+    private String serverBaseUrl = "http://127.0.0.1:8080";
 }

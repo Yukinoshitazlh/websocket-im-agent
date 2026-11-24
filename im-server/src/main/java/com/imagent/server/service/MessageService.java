@@ -12,6 +12,7 @@ import com.imagent.common.protocol.WsPacketType;
 import com.imagent.common.protocol.payload.ChatPushPayload;
 import com.imagent.common.protocol.payload.ChatSendPayload;
 import com.imagent.common.protocol.payload.ServerAckPayload;
+import com.imagent.server.dto.InternalAgentReplyRequest;
 import com.imagent.server.dto.MessageVO;
 import com.imagent.server.entity.ImMessage;
 import com.imagent.server.entity.ImUser;
@@ -49,6 +50,7 @@ public class MessageService {
     private final ConversationService conversationService;
     private final SeqGeneratorService seqGeneratorService;
     private final UnreadService unreadService;
+    private final AgentBridgeService agentBridgeService;
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
     private final TransactionTemplate transactionTemplate;
@@ -207,7 +209,52 @@ public class MessageService {
                 .build();
 
         dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.CHAT_PUSH, pushPayload));
+
+        // 4. 若触发 @AI，异步投递给独立的 im-agent Worker（绝不阻塞普通消息主链路）
+        if (agentBridgeService.shouldTriggerAgent(payload.getMentionAgent(), savedMessage.getContent())) {
+            agentBridgeService.enqueueAgentTask(convId, senderId, savedMessage.getId(), savedMessage.getContent());
+        }
         return ack;
+    }
+
+    /**
+     * 供 im-agent 在流式生成结束（或被打断截断）后统一分配 seq 并持久化最终回复
+     */
+    public ServerAckPayload persistAgentReply(InternalAgentReplyRequest req) {
+        Long convId = req.getConversationId();
+        String clientMsgId = "agent-task-" + req.getTaskId();
+        ImMessage saved = transactionTemplate.execute(status -> {
+            Long seq = seqGeneratorService.nextSeq(convId);
+            ImMessage message = new ImMessage();
+            message.setConversationId(convId);
+            message.setSenderId(AgentBridgeService.AI_ASSISTANT_USER_ID);
+            message.setClientMsgId(clientMsgId);
+            message.setSeq(seq);
+            message.setMsgType(req.getMsgType() == null ? "AGENT_TEXT" : req.getMsgType());
+            message.setContent(req.getContent());
+            message.setReplyToMsgId(req.getReplyToMsgId());
+            message.setStatus(1);
+            messageMapper.insert(message);
+
+            String preview = "[AI助手] " + (req.getContent().length() > 50
+                    ? req.getContent().substring(0, 50) + "..."
+                    : req.getContent());
+            conversationMapper.updateLastMessage(convId, seq, message.getId(), preview);
+            return message;
+        });
+
+        if (saved == null) {
+            throw new BizException(ErrorCode.INTERNAL_ERROR, "Agent 回复落库失败");
+        }
+        List<Long> memberIds = conversationService.listMemberIds(convId);
+        unreadService.incrementUnreadForMembers(convId, AgentBridgeService.AI_ASSISTANT_USER_ID, memberIds);
+
+        return ServerAckPayload.builder()
+                .clientMsgId(clientMsgId)
+                .msgId(saved.getId())
+                .conversationId(convId)
+                .seq(saved.getSeq())
+                .build();
     }
 
     private ServerAckPayload readCachedAck(String idempKey) {

@@ -37,6 +37,7 @@ class MessageServiceIdempotencyTest {
     @Mock private ConversationService conversationService;
     @Mock private SeqGeneratorService seqGeneratorService;
     @Mock private UnreadService unreadService;
+    @Mock private AgentBridgeService agentBridgeService;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOperations;
     @Mock private RabbitTemplate rabbitTemplate;
@@ -49,7 +50,7 @@ class MessageServiceIdempotencyTest {
     void setUp() {
         messageService = new MessageService(
                 messageMapper, conversationMapper, userMapper, conversationService,
-                seqGeneratorService, unreadService, redisTemplate, rabbitTemplate,
+                seqGeneratorService, unreadService, agentBridgeService, redisTemplate, rabbitTemplate,
                 transactionTemplate, objectMapper
         );
     }

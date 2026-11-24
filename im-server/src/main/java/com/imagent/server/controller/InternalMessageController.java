@@ -2,6 +2,7 @@ package com.imagent.server.controller;
 
 import com.imagent.common.model.Result;
 import com.imagent.common.protocol.payload.ServerAckPayload;
+import com.imagent.server.dto.InternalAgentReplyRequest;
 import com.imagent.server.dto.InternalChatSendRequest;
 import com.imagent.server.dto.InternalMsgAckRequest;
 import com.imagent.server.service.MessageService;
@@ -13,7 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 供 im-gateway 调用的内部上行消息与已读回执受理接口
+ * 供 im-gateway 与 im-agent 调用的内部消息受理接口
  */
 @RestController
 @RequestMapping("/internal/messages")
@@ -31,5 +32,10 @@ public class InternalMessageController {
     public Result<Void> ack(@Valid @RequestBody InternalMsgAckRequest request) {
         messageService.ackRead(request.getUserId(), request.getConversationId(), request.getSeq());
         return Result.ok();
+    }
+
+    @PostMapping("/agent-reply")
+    public Result<ServerAckPayload> agentReply(@Valid @RequestBody InternalAgentReplyRequest request) {
+        return Result.ok(messageService.persistAgentReply(request));
     }
 }

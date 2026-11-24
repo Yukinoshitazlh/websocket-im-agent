@@ -7,6 +7,8 @@ import com.imagent.common.model.ErrorCode;
 import com.imagent.common.model.Result;
 import com.imagent.common.protocol.WsPacket;
 import com.imagent.common.protocol.WsPacketType;
+import com.imagent.common.protocol.payload.AgentApprovalDecisionPayload;
+import com.imagent.common.protocol.payload.AgentCancelPayload;
 import com.imagent.common.protocol.payload.ChatSendPayload;
 import com.imagent.common.protocol.payload.MsgAckPayload;
 import com.imagent.common.protocol.payload.ServerAckPayload;
@@ -101,6 +103,14 @@ public class WsFrameDispatchHandler extends SimpleChannelInboundHandler<TextWebS
                     MsgAckPayload payload = objectMapper.treeToValue(packet.getData(), MsgAckPayload.class);
                     handleMsgAckAsync(userId, payload);
                 }
+                case AGENT_CANCEL -> {
+                    AgentCancelPayload payload = objectMapper.treeToValue(packet.getData(), AgentCancelPayload.class);
+                    handleAgentCancelAsync(ctx.channel(), userId, packet.getRequestId(), payload);
+                }
+                case AGENT_APPROVAL -> {
+                    AgentApprovalDecisionPayload payload = objectMapper.treeToValue(packet.getData(), AgentApprovalDecisionPayload.class);
+                    handleAgentApprovalAsync(ctx.channel(), userId, packet.getRequestId(), payload);
+                }
                 default -> writePacket(ctx.channel(), WsPacket.of(WsPacketType.ERROR, packet.getRequestId(),
                         Map.of("code", ErrorCode.BAD_REQUEST.getCode(), "message", "当前阶段暂不支持信令: " + packet.getType())));
             }
@@ -156,6 +166,62 @@ public class WsFrameDispatchHandler extends SimpleChannelInboundHandler<TextWebS
             } catch (Exception e) {
                 log.warn("转发 MSG_ACK 到 im-server 失败: userId={}, convId={}, err={}",
                         userId, payload.getConversationId(), e.getMessage());
+            }
+        });
+    }
+
+    private void handleAgentCancelAsync(Channel channel, Long userId, String requestId, AgentCancelPayload payload) {
+        if (payload == null || payload.getTaskId() == null || payload.getConversationId() == null) {
+            return;
+        }
+        businessExecutor.execute(() -> {
+            try {
+                Result<Void> resp = imServerRestClient.post()
+                        .uri("/internal/agent/cancel")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of(
+                                "userId", userId,
+                                "taskId", payload.getTaskId(),
+                                "conversationId", payload.getConversationId()
+                        ))
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+                if (resp != null && resp.getCode() != 200) {
+                    writePacket(channel, WsPacket.of(WsPacketType.ERROR, requestId,
+                            Map.of("code", resp.getCode(), "message", resp.getMessage())));
+                }
+            } catch (Exception e) {
+                log.error("转发 AGENT_CANCEL 失败: userId={}, taskId={}", userId, payload.getTaskId(), e);
+            }
+        });
+    }
+
+    private void handleAgentApprovalAsync(Channel channel, Long userId, String requestId, AgentApprovalDecisionPayload payload) {
+        if (payload == null || payload.getTaskId() == null || payload.getApprovalId() == null || payload.getApproved() == null) {
+            return;
+        }
+        businessExecutor.execute(() -> {
+            try {
+                Result<Void> resp = imServerRestClient.post()
+                        .uri("/internal/agent/approval")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of(
+                                "userId", userId,
+                                "taskId", payload.getTaskId(),
+                                "approvalId", payload.getApprovalId(),
+                                "approved", payload.getApproved(),
+                                "comment", payload.getComment() == null ? "" : payload.getComment()
+                        ))
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+                if (resp != null && resp.getCode() != 200) {
+                    writePacket(channel, WsPacket.of(WsPacketType.ERROR, requestId,
+                            Map.of("code", resp.getCode(), "message", resp.getMessage())));
+                }
+            } catch (Exception e) {
+                log.error("转发 AGENT_APPROVAL 失败: userId={}, approvalId={}", userId, payload.getApprovalId(), e);
+                writePacket(channel, WsPacket.of(WsPacketType.ERROR, requestId,
+                        Map.of("code", ErrorCode.INTERNAL_ERROR.getCode(), "message", "审批提交失败，请重试")));
             }
         });
     }
