@@ -18,6 +18,11 @@ public final class RedisKeys {
         return "im:seq:conv:" + conversationId;
     }
 
+    /** 会话 seq 冷启动初始化分布式锁：im:lock:seq:init:{conversationId} */
+    public static String seqInitLock(Long conversationId) {
+        return "im:lock:seq:init:" + conversationId;
+    }
+
     /** 客户端消息发送幂等键：im:idemp:{senderId}:{clientMsgId} */
     public static String msgIdempotency(Long senderId, String clientMsgId) {
         return "im:idemp:" + senderId + ":" + clientMsgId;

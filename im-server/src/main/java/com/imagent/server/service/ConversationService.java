@@ -31,6 +31,7 @@ public class ConversationService {
     private final ImConversationMapper conversationMapper;
     private final ImConversationMemberMapper memberMapper;
     private final ImUserMapper userMapper;
+    private final UnreadService unreadService;
 
     @Transactional(rollbackFor = Exception.class)
     public ConversationVO createOrGetDirectConversation(Long currentUserId, Long targetUserId) {
@@ -112,12 +113,23 @@ public class ConversationService {
                 .toList();
 
         Map<Long, String> directTitleMap = resolveDirectTitles(directConvIds, userId);
+        Map<Long, Long> lastReadMap = memberships.stream()
+                .collect(Collectors.toMap(
+                        ImConversationMember::getConversationId,
+                        m -> m.getLastReadSeq() == null ? 0L : m.getLastReadSeq(),
+                        (a, b) -> Math.max(a, b)
+                ));
+        Map<Long, Long> redisUnreadMap = unreadService.getUserUnreadMap(userId);
+
         List<ConversationVO> result = new ArrayList<>(conversations.size());
         for (ImConversation conv : conversations) {
             String displayTitle = Integer.valueOf(1).equals(conv.getType())
                     ? directTitleMap.getOrDefault(conv.getId(), "单聊会话")
                     : conv.getTitle();
-            result.add(toVO(conv, displayTitle));
+            long lastRead = lastReadMap.getOrDefault(conv.getId(), 0L);
+            long currentSeq = conv.getCurrentSeq() == null ? 0L : conv.getCurrentSeq();
+            long unread = redisUnreadMap.getOrDefault(conv.getId(), Math.max(0L, currentSeq - lastRead));
+            result.add(toVO(conv, displayTitle, lastRead, unread));
         }
         return result;
     }
@@ -169,6 +181,10 @@ public class ConversationService {
     }
 
     private ConversationVO toVO(ImConversation conv, String displayTitle) {
+        return toVO(conv, displayTitle, 0L, 0L);
+    }
+
+    private ConversationVO toVO(ImConversation conv, String displayTitle, long lastReadSeq, long unreadCount) {
         Long lastTime = conv.getLastMsgTime() != null
                 ? conv.getLastMsgTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 : null;
@@ -177,6 +193,8 @@ public class ConversationService {
                 .type(conv.getType())
                 .title(displayTitle)
                 .currentSeq(conv.getCurrentSeq())
+                .lastReadSeq(lastReadSeq)
+                .unreadCount(unreadCount)
                 .lastMsgPreview(conv.getLastMsgPreview())
                 .lastMsgTime(lastTime)
                 .build();

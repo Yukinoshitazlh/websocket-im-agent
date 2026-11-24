@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebSocket IM + AI Agent 联调台 (阶段 1 MVP)</title>
+    <title>WebSocket IM + AI Agent 联调台 (阶段 2 可靠底座)</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -17,38 +17,48 @@
         .field input { width: 100%; padding: 9px 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #f8fafc; outline: none; }
         .btn { width: 100%; padding: 10px; border: none; border-radius: 6px; background: #3b82f6; color: #fff; font-weight: 600; cursor: pointer; margin-top: 6px; }
         .btn:hover { background: #2563eb; }
-        .btn-sm { width: auto; padding: 6px 12px; font-size: 12px; margin-top: 0; }
+        .btn-sm { width: auto; padding: 6px 10px; font-size: 12px; margin-top: 0; }
         .btn-secondary { background: #475569; }
         .btn-secondary:hover { background: #64748b; }
+        .btn-warn { background: #d97706; }
+        .btn-warn:hover { background: #b45309; }
         .err { color: #f87171; font-size: 12px; margin-top: 8px; min-height: 16px; text-align: center; }
 
-        .app { display: none; width: 1060px; height: 90vh; background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-        .sidebar { width: 310px; border-right: 1px solid #334155; display: flex; flex-direction: column; background: #162032; }
-        .profile-bar { padding: 14px 16px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
-        .ws-status { font-size: 12px; display: flex; align-items: center; gap: 6px; color: #94a3b8; }
-        .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
+        .app { display: none; width: 1120px; height: 92vh; background: #1e293b; border: 1px solid #334155; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        .sidebar { width: 330px; border-right: 1px solid #334155; display: flex; flex-direction: column; background: #162032; }
+        .profile-bar { padding: 12px 14px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+        .ws-status { font-size: 12px; display: flex; align-items: center; gap: 6px; color: #94a3b8; margin-top: 4px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; flex-shrink: 0; }
         .dot.on { background: #22c55e; }
+        .dot.reconnecting { background: #f59e0b; }
+        .gw-bar { padding: 8px 12px; border-bottom: 1px solid #334155; display: flex; align-items: center; gap: 6px; background: #0f172a; font-size: 12px; }
+        .gw-bar select { flex: 1; background: #1e293b; color: #e2e8f0; border: 1px solid #475569; border-radius: 5px; padding: 4px 6px; font-size: 12px; }
         .action-box { padding: 10px 12px; border-bottom: 1px solid #334155; display: flex; gap: 6px; }
         .action-box input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 12px; }
         .user-results { max-height: 140px; overflow-y: auto; border-bottom: 1px solid #334155; display: none; background: #0f172a; }
         .user-item { padding: 8px 12px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; }
         .conv-list { flex: 1; overflow-y: auto; }
-        .conv-item { padding: 12px 16px; border-bottom: 1px solid #1e293b; cursor: pointer; transition: background 0.15s; }
+        .conv-item { padding: 12px 14px; border-bottom: 1px solid #1e293b; cursor: pointer; transition: background 0.15s; }
         .conv-item:hover, .conv-item.active { background: #253349; }
-        .conv-title { font-size: 14px; font-weight: 600; display: flex; justify-content: space-between; }
+        .conv-title { font-size: 14px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+        .badge { background: #ef4444; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; min-width: 18px; text-align: center; }
         .conv-preview { font-size: 12px; color: #94a3b8; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
         .chat-main { flex: 1; display: flex; flex-direction: column; }
-        .chat-header { padding: 14px 20px; border-bottom: 1px solid #334155; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+        .chat-header { padding: 12px 18px; border-bottom: 1px solid #334155; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .sync-banner { font-size: 12px; color: #38bdf8; }
         .msg-list { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
         .msg-row { display: flex; flex-direction: column; max-width: 72%; }
         .msg-row.mine { align-self: flex-end; align-items: flex-end; }
         .msg-meta { font-size: 11px; color: #94a3b8; margin-bottom: 4px; }
         .msg-bubble { padding: 10px 14px; border-radius: 10px; background: #334155; line-height: 1.45; font-size: 14px; word-break: break-word; }
         .msg-row.mine .msg-bubble { background: #2563eb; color: #fff; }
-        .msg-ack { font-size: 10px; color: #64748b; margin-top: 2px; }
-        .composer { padding: 14px 20px; border-top: 1px solid #334155; display: flex; gap: 10px; }
+        .msg-ack { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+        .msg-ack.pending { color: #f59e0b; }
+        .msg-ack.ok { color: #22c55e; }
+        .composer { padding: 12px 18px; border-top: 1px solid #334155; display: flex; gap: 8px; }
         .composer input { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #fff; outline: none; }
+
         .modal-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 100; }
         .modal-mask.show { display: flex; }
         .modal-box { width: 380px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
@@ -86,11 +96,19 @@
 <div class="app" id="app">
     <div class="sidebar">
         <div class="profile-bar">
-            <div>
-                <div id="meNickname" style="font-weight:600;font-size:15px;">-</div>
+            <div style="min-width:0;">
+                <div id="meNickname" style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">-</div>
                 <div class="ws-status"><span class="dot" id="wsDot"></span><span id="wsText">未连接</span></div>
             </div>
             <button class="btn btn-sm btn-secondary" onclick="logout()">退出</button>
+        </div>
+        <div class="gw-bar">
+            <span>网关:</span>
+            <select id="gwSelect" onchange="switchGateway()">
+                <option value="ws://127.0.0.1:9001/ws">gateway-1 (:9001)</option>
+                <option value="ws://127.0.0.1:9002/ws">gateway-2 (:9002)</option>
+            </select>
+            <button class="btn btn-sm btn-secondary" id="toggleNetBtn" onclick="toggleManualOffline()">模拟断网</button>
         </div>
         <div class="action-box">
             <input id="searchInput" placeholder="搜账号/昵称发起单聊..." />
@@ -103,12 +121,13 @@
     <div class="chat-main">
         <div class="chat-header">
             <span id="chatTitle">请选择或发起一个会话</span>
-            <span id="chatSeqInfo" style="font-size:12px;color:#94a3b8;"></span>
+            <span class="sync-banner" id="chatSeqInfo"></span>
         </div>
         <div class="msg-list" id="msgList"></div>
         <div class="composer">
-            <input id="msgInput" placeholder="输入消息并回车发送..." onkeydown="if(event.key==='Enter') sendMessage()" />
-            <button class="btn btn-sm" style="padding:0 20px;font-size:14px;" onclick="sendMessage()">发送</button>
+            <input id="msgInput" placeholder="输入消息并回车发送..." onkeydown="if(event.key==='Enter') sendMessage(false)" />
+            <button class="btn btn-sm btn-warn" title="用相同 clientMsgId 连发两次验证服务端幂等去重" onclick="sendMessage(true)">重发幂等测试</button>
+            <button class="btn btn-sm" style="padding:0 18px;font-size:14px;" onclick="sendMessage(false)">发送</button>
         </div>
     </div>
 </div>
@@ -131,14 +150,21 @@
 
 <script>
     const API_BASE = '';
-    const WS_URL = 'ws://127.0.0.1:9001/ws';
+    let wsUrl = sessionStorage.getItem('im_ws_url') || 'ws://127.0.0.1:9001/ws';
     let authMode = 'login';
     let token = sessionStorage.getItem('im_token') || '';
     let currentUser = JSON.parse(sessionStorage.getItem('im_user') || 'null');
     let ws = null;
     let heartbeatTimer = null;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let manualOffline = false;
+    let hasConnectedOnce = false;
+
     let activeConvId = null;
-    const pendingClientMsgs = new Map();
+    const convMaxSeqMap = new Map();
+    const renderedClientMsgIds = new Map();
+    const renderedSeqSet = new Set();
 
     function switchTab(mode) {
         authMode = mode;
@@ -176,8 +202,11 @@
     }
 
     function logout() {
-        sessionStorage.clear();
+        manualOffline = true;
+        clearTimeout(reconnectTimer);
+        clearInterval(heartbeatTimer);
         if (ws) ws.close();
+        sessionStorage.clear();
         location.reload();
     }
 
@@ -185,27 +214,80 @@
         document.getElementById('authCard').style.display = 'none';
         document.getElementById('app').style.display = 'flex';
         document.getElementById('meNickname').innerText = `${currentUser.nickname} (ID:${currentUser.id})`;
+        document.getElementById('gwSelect').value = wsUrl;
         loadConversations();
         connectWs();
     }
 
+    function setWsUi(state, text) {
+        const dot = document.getElementById('wsDot');
+        dot.className = 'dot' + (state ? ' ' + state : '');
+        document.getElementById('wsText').innerText = text;
+    }
+
+    function switchGateway() {
+        wsUrl = document.getElementById('gwSelect').value;
+        sessionStorage.setItem('im_ws_url', wsUrl);
+        manualOffline = false;
+        document.getElementById('toggleNetBtn').innerText = '模拟断网';
+        clearTimeout(reconnectTimer);
+        reconnectAttempt = 0;
+        if (ws) ws.close();
+        connectWs();
+    }
+
+    function toggleManualOffline() {
+        const btn = document.getElementById('toggleNetBtn');
+        if (!manualOffline) {
+            manualOffline = true;
+            clearTimeout(reconnectTimer);
+            clearInterval(heartbeatTimer);
+            if (ws) ws.close();
+            setWsUi('', '已手动断网（可测试离线补齐）');
+            btn.innerText = '恢复联网';
+        } else {
+            manualOffline = false;
+            btn.innerText = '模拟断网';
+            reconnectAttempt = 0;
+            connectWs();
+        }
+    }
+
     function connectWs() {
-        ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
-        ws.onopen = () => {
-            document.getElementById('wsDot').classList.add('on');
-            document.getElementById('wsText').innerText = 'WS 已连接 (9001)';
+        if (manualOffline) return;
+        const portLabel = wsUrl.includes('9002') ? '9002' : '9001';
+        setWsUi('reconnecting', `正在连接 (${portLabel})...`);
+        ws = new WebSocket(`${wsUrl}?token=${encodeURIComponent(token)}`);
+
+        ws.onopen = async () => {
+            const isReconnect = hasConnectedOnce;
+            hasConnectedOnce = true;
+            reconnectAttempt = 0;
+            setWsUi('on', `WS 已连接 (${portLabel})`);
             clearInterval(heartbeatTimer);
             heartbeatTimer = setInterval(() => {
-                if (ws.readyState === WebSocket.OPEN) {
+                if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: 'PING', requestId: 'hb-' + Date.now(), timestamp: Date.now(), data: {} }));
                 }
             }, 25000);
+
+            if (isReconnect) {
+                await syncActiveConversationAfterReconnect();
+                loadConversations();
+            }
         };
+
         ws.onclose = () => {
-            document.getElementById('wsDot').classList.remove('on');
-            document.getElementById('wsText').innerText = '已断开（刷新重连）';
             clearInterval(heartbeatTimer);
+            if (manualOffline) return;
+            // 指数退避自动重连：1s -> 2s -> 4s -> 8s -> max 15s
+            const delaySec = Math.min(15, Math.pow(2, reconnectAttempt));
+            reconnectAttempt++;
+            setWsUi('reconnecting', `已断开，${delaySec}s 后自动重连...`);
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connectWs, delaySec * 1000);
         };
+
         ws.onmessage = (event) => {
             const pkt = JSON.parse(event.data);
             if (pkt.type === 'CHAT_PUSH') {
@@ -218,6 +300,42 @@
         };
     }
 
+    async function syncActiveConversationAfterReconnect() {
+        if (!activeConvId) return;
+        const afterSeq = convMaxSeqMap.get(activeConvId) || 0;
+        try {
+            const missed = await api(`/api/messages/sync?conversationId=${encodeURIComponent(activeConvId)}&afterSeq=${afterSeq}&limit=100`);
+            let added = 0;
+            missed.forEach(m => {
+                if (appendOrMergeMessage(m)) added++;
+            });
+            if (added > 0) {
+                const maxSeq = convMaxSeqMap.get(activeConvId) || afterSeq;
+                sendMsgAck(activeConvId, maxSeq);
+                document.getElementById('chatSeqInfo').innerText = `重连成功，已增量同步 ${added} 条离线消息 (最新 #${maxSeq})`;
+                scrollToBottom();
+            } else {
+                document.getElementById('chatSeqInfo').innerText = `重连成功，消息已是最新 (#${afterSeq})`;
+            }
+        } catch (e) {
+            console.error('重连增量同步失败:', e);
+        }
+    }
+
+    function sendMsgAck(convId, seq) {
+        if (!convId || !seq || seq <= 0) return;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'MSG_ACK',
+                requestId: 'ack-' + Date.now(),
+                timestamp: Date.now(),
+                data: { conversationId: String(convId), seq }
+            }));
+        } else {
+            api(`/api/messages/ack?conversationId=${encodeURIComponent(convId)}&seq=${seq}`, { method: 'POST' }).catch(() => {});
+        }
+    }
+
     async function searchUsers() {
         try {
             const kw = document.getElementById('searchInput').value.trim();
@@ -226,7 +344,7 @@
             box.style.display = 'block';
             box.innerHTML = users.length === 0 ? '<div class="user-item">未找到用户</div>' : users.map(u => `
                 <div class="user-item">
-                    <span>${escapeHtml(u.nickname)} (@${escapeHtml(u.username)}, ID:${u.id})</span>
+                    <span>${escapeHtml(u.nickname)} (@${escapeHtml(u.username)})</span>
                     <button class="btn btn-sm" onclick="startDirect('${u.id}')">发消息</button>
                 </div>
             `).join('');
@@ -250,9 +368,7 @@
         try {
             const users = await api('/api/users/search?keyword=');
             const listEl = document.getElementById('groupMemberList');
-            if (users.length === 0) {
-                return alert('当前还没有其他已注册用户，请先注册另一个账号');
-            }
+            if (users.length === 0) return alert('当前还没有其他已注册用户，请先注册另一个账号');
             listEl.innerHTML = users.map(u => `
                 <label class="member-opt">
                     <input type="checkbox" value="${u.id}" />
@@ -273,13 +389,9 @@
         try {
             const title = document.getElementById('groupTitleInput').value.trim();
             if (!title) return alert('请输入群名称');
-            const checked = Array.from(document.querySelectorAll('#groupMemberList input[type="checkbox"]:checked'));
-            const memberIds = checked.map(el => el.value);
+            const memberIds = Array.from(document.querySelectorAll('#groupMemberList input[type="checkbox"]:checked')).map(el => el.value);
             if (memberIds.length === 0) return alert('请至少勾选一名群成员');
-            const conv = await api('/api/conversations/group', {
-                method: 'POST',
-                body: JSON.stringify({ title, memberIds })
-            });
+            const conv = await api('/api/conversations/group', { method: 'POST', body: JSON.stringify({ title, memberIds }) });
             closeGroupModal();
             await loadConversations();
             selectConversation(String(conv.id), conv.title);
@@ -291,15 +403,19 @@
     async function loadConversations() {
         try {
             const list = await api('/api/conversations');
-            document.getElementById('convList').innerHTML = list.map(c => `
-                <div class="conv-item ${String(c.id) === String(activeConvId) ? 'active' : ''}" onclick="selectConversation('${c.id}', '${escapeHtml(c.title).replace(/'/g, "\\'")}')">
-                    <div class="conv-title">
-                        <span>${c.type === 2 ? '[群] ' : ''}${escapeHtml(c.title)}</span>
-                        <span style="font-size:11px;color:#64748b;">#${c.currentSeq}</span>
+            document.getElementById('convList').innerHTML = list.map(c => {
+                const unread = Number(c.unreadCount || 0);
+                const badgeHtml = unread > 0 ? `<span class="badge">${unread > 99 ? '99+' : unread}</span>` : `<span style="font-size:11px;color:#64748b;">#${c.currentSeq || 0}</span>`;
+                return `
+                    <div class="conv-item ${String(c.id) === String(activeConvId) ? 'active' : ''}" onclick="selectConversation('${c.id}', '${escapeHtml(c.title).replace(/'/g, "\\'")}')">
+                        <div class="conv-title">
+                            <span>${c.type === 2 ? '[群] ' : ''}${escapeHtml(c.title)}</span>
+                            ${badgeHtml}
+                        </div>
+                        <div class="conv-preview">${escapeHtml(c.lastMsgPreview || '暂无消息')}</div>
                     </div>
-                    <div class="conv-preview">${escapeHtml(c.lastMsgPreview || '暂无消息')}</div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         } catch (e) {
             console.error('加载会话列表失败:', e);
         }
@@ -308,24 +424,37 @@
     async function selectConversation(convId, title) {
         try {
             activeConvId = String(convId);
-            document.getElementById('chatTitle').innerText = title + ` (会话ID:${activeConvId})`;
-            loadConversations();
+            document.getElementById('chatTitle').innerText = title;
             const history = await api(`/api/messages/history?conversationId=${encodeURIComponent(activeConvId)}&limit=50`);
             const msgList = document.getElementById('msgList');
             msgList.innerHTML = '';
-            history.forEach(appendMessageEl);
-            msgList.scrollTop = msgList.scrollHeight;
+            renderedClientMsgIds.clear();
+            renderedSeqSet.clear();
+            let maxSeq = 0;
+            history.forEach(m => {
+                appendOrMergeMessage(m);
+                if (m.seq > maxSeq) maxSeq = m.seq;
+            });
+            convMaxSeqMap.set(activeConvId, maxSeq);
+            if (maxSeq > 0) {
+                sendMsgAck(activeConvId, maxSeq);
+                document.getElementById('chatSeqInfo').innerText = `已同步至 #${maxSeq}`;
+            } else {
+                document.getElementById('chatSeqInfo').innerText = '';
+            }
+            scrollToBottom();
+            setTimeout(loadConversations, 150);
         } catch (e) {
             alert('加载会话历史失败: ' + e.message);
         }
     }
 
-    function sendMessage() {
+    function sendMessage(duplicateTest) {
         if (!activeConvId) return alert('请先在左侧选择或发起一个会话');
         const input = document.getElementById('msgInput');
-        const content = input.value.trim();
+        const content = input.value.trim() || (duplicateTest ? '幂等重发测试消息' : '');
         if (!content) return;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return alert('WebSocket 未连接，请确认 GatewayApplication(9001) 已启动并刷新页面');
+        if (!ws || ws.readyState !== WebSocket.OPEN) return alert('WebSocket 未连接，请先恢复联网或确认网关已启动');
 
         const clientMsgId = 'c-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
         const pkt = {
@@ -334,26 +463,80 @@
             timestamp: Date.now(),
             data: { conversationId: String(activeConvId), clientMsgId, msgType: 'TEXT', content, mentionAgent: false }
         };
-        pendingClientMsgs.set(clientMsgId, true);
+
+        // 乐观更新：先立即上屏显示“发送中...”，收到 SERVER_ACK 后更新为已送达 #seq
+        renderOptimisticMessage({
+            clientMsgId,
+            senderId: currentUser.id,
+            senderNickname: currentUser.nickname,
+            content,
+            createdAt: Date.now()
+        });
+        scrollToBottom();
+
         ws.send(JSON.stringify(pkt));
+        if (duplicateTest) {
+            // 故意以同一 clientMsgId 再发一次，验证服务端 Redis + MySQL 双重幂等去重
+            ws.send(JSON.stringify(pkt));
+            document.getElementById('chatSeqInfo').innerText = `已连发 2 次相同 clientMsgId (${clientMsgId})，观察服务端幂等去重...`;
+        }
         input.value = '';
     }
 
-    function onServerAck(ack) {
-        pendingClientMsgs.delete(ack.clientMsgId);
-        document.getElementById('chatSeqInfo').innerText = `最新已送达 #${ack.seq}`;
+    function renderOptimisticMessage(msg) {
+        const el = document.createElement('div');
+        el.className = 'msg-row mine';
+        el.dataset.clientMsgId = msg.clientMsgId;
+        const timeStr = new Date(msg.createdAt).toLocaleTimeString();
+        el.innerHTML = `
+            <div class="msg-meta">${escapeHtml(msg.senderNickname)} · ${timeStr}</div>
+            <div class="msg-bubble">${escapeHtml(msg.content)}</div>
+            <div class="msg-ack pending">发送中...</div>
+        `;
+        document.getElementById('msgList').appendChild(el);
+        renderedClientMsgIds.set(msg.clientMsgId, el);
     }
 
-    function onChatPush(msg) {
-        loadConversations();
-        if (String(msg.conversationId) === String(activeConvId)) {
-            appendMessageEl(msg);
-            const msgList = document.getElementById('msgList');
-            msgList.scrollTop = msgList.scrollHeight;
+    function onServerAck(ack) {
+        const el = renderedClientMsgIds.get(ack.clientMsgId);
+        if (el) {
+            const ackEl = el.querySelector('.msg-ack');
+            ackEl.className = 'msg-ack ok';
+            ackEl.innerText = `✓ 已送达 #${ack.seq}`;
+            renderedSeqSet.add(ack.seq);
+        }
+        if (String(ack.conversationId) === String(activeConvId)) {
+            const prev = convMaxSeqMap.get(activeConvId) || 0;
+            if (ack.seq > prev) convMaxSeqMap.set(activeConvId, ack.seq);
+            document.getElementById('chatSeqInfo').innerText = `SERVER_ACK 确认 #${ack.seq}`;
         }
     }
 
-    function appendMessageEl(msg) {
+    function onChatPush(msg) {
+        if (String(msg.conversationId) === String(activeConvId)) {
+            appendOrMergeMessage(msg);
+            const prev = convMaxSeqMap.get(activeConvId) || 0;
+            if (msg.seq > prev) convMaxSeqMap.set(activeConvId, msg.seq);
+            sendMsgAck(activeConvId, msg.seq);
+            scrollToBottom();
+            setTimeout(loadConversations, 150);
+        } else {
+            loadConversations();
+        }
+    }
+
+    function appendOrMergeMessage(msg) {
+        if (msg.clientMsgId && renderedClientMsgIds.has(msg.clientMsgId)) {
+            const existingEl = renderedClientMsgIds.get(msg.clientMsgId);
+            const ackEl = existingEl.querySelector('.msg-ack');
+            ackEl.className = 'msg-ack ok';
+            ackEl.innerText = `✓ 已送达 #${msg.seq}`;
+            if (msg.seq) renderedSeqSet.add(msg.seq);
+            return false;
+        }
+        if (msg.seq && renderedSeqSet.has(msg.seq)) {
+            return false;
+        }
         const isMine = String(msg.senderId) === String(currentUser.id);
         const el = document.createElement('div');
         el.className = 'msg-row ' + (isMine ? 'mine' : '');
@@ -361,13 +544,25 @@
         el.innerHTML = `
             <div class="msg-meta">${escapeHtml(msg.senderNickname)} · ${timeStr}</div>
             <div class="msg-bubble">${escapeHtml(msg.content)}</div>
-            <div class="msg-ack">#${msg.seq}</div>
+            <div class="msg-ack ${isMine ? 'ok' : ''}">${isMine ? '✓ ' : ''}#${msg.seq}</div>
         `;
         document.getElementById('msgList').appendChild(el);
+        if (msg.clientMsgId) renderedClientMsgIds.set(msg.clientMsgId, el);
+        if (msg.seq) renderedSeqSet.add(msg.seq);
+        if (String(msg.conversationId) === String(activeConvId)) {
+            const prev = convMaxSeqMap.get(activeConvId) || 0;
+            if (msg.seq > prev) convMaxSeqMap.set(activeConvId, msg.seq);
+        }
+        return true;
+    }
+
+    function scrollToBottom() {
+        const msgList = document.getElementById('msgList');
+        msgList.scrollTop = msgList.scrollHeight;
     }
 
     function escapeHtml(str) {
-        return str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+        return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
     }
 
     if (token && currentUser) enterApp();

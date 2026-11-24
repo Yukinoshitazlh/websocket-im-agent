@@ -8,6 +8,7 @@ import com.imagent.common.model.Result;
 import com.imagent.common.protocol.WsPacket;
 import com.imagent.common.protocol.WsPacketType;
 import com.imagent.common.protocol.payload.ChatSendPayload;
+import com.imagent.common.protocol.payload.MsgAckPayload;
 import com.imagent.common.protocol.payload.ServerAckPayload;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler;
@@ -96,6 +97,10 @@ public class WsFrameDispatchHandler extends SimpleChannelInboundHandler<TextWebS
                     ChatSendPayload payload = objectMapper.treeToValue(packet.getData(), ChatSendPayload.class);
                     handleChatSendAsync(ctx.channel(), userId, packet.getRequestId(), payload);
                 }
+                case MSG_ACK -> {
+                    MsgAckPayload payload = objectMapper.treeToValue(packet.getData(), MsgAckPayload.class);
+                    handleMsgAckAsync(userId, payload);
+                }
                 default -> writePacket(ctx.channel(), WsPacket.of(WsPacketType.ERROR, packet.getRequestId(),
                         Map.of("code", ErrorCode.BAD_REQUEST.getCode(), "message", "当前阶段暂不支持信令: " + packet.getType())));
             }
@@ -128,6 +133,29 @@ public class WsFrameDispatchHandler extends SimpleChannelInboundHandler<TextWebS
                 log.error("转发 CHAT_SEND 到 im-server 失败: senderId={}", senderId, e);
                 writePacket(channel, WsPacket.of(WsPacketType.ERROR, requestId,
                         Map.of("code", ErrorCode.INTERNAL_ERROR.getCode(), "message", "消息投递失败，请稍后重试")));
+            }
+        });
+    }
+
+    private void handleMsgAckAsync(Long userId, MsgAckPayload payload) {
+        if (payload == null || payload.getConversationId() == null || payload.getSeq() == null) {
+            return;
+        }
+        businessExecutor.execute(() -> {
+            try {
+                imServerRestClient.post()
+                        .uri("/internal/messages/ack")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of(
+                                "userId", userId,
+                                "conversationId", payload.getConversationId(),
+                                "seq", payload.getSeq()
+                        ))
+                        .retrieve()
+                        .toBodilessEntity();
+            } catch (Exception e) {
+                log.warn("转发 MSG_ACK 到 im-server 失败: userId={}, convId={}, err={}",
+                        userId, payload.getConversationId(), e.getMessage());
             }
         });
     }

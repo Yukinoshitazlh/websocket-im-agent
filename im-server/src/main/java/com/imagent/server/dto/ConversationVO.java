@@ -16,6 +16,8 @@ public class ConversationVO {
     private Integer type;
     private String title;
     private Long currentSeq;
+    private Long lastReadSeq;
+    private Long unreadCount;
     private String lastMsgPreview;
     private Long lastMsgTime;
 }
