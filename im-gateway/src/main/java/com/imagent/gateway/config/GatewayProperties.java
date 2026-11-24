@@ -17,4 +17,5 @@ public class GatewayProperties {
     private int readerIdleSeconds = 60;
     private String jwtSecret = "im-agent-local-dev-jwt-secret-key-32bytes!";
     private long jwtExpireSeconds = 604800L;
+    private String serverBaseUrl = "http://127.0.0.1:8080";
 }

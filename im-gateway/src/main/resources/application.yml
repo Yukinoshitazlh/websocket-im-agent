@@ -36,3 +36,4 @@ im:
     reader-idle-seconds: 60
     jwt-secret: ${JWT_SECRET:im-agent-local-dev-jwt-secret-key-32bytes!}
     jwt-expire-seconds: 604800
+    server-base-url: ${IM_SERVER_URL:http://127.0.0.1:8080}

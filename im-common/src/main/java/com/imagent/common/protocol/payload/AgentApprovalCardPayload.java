@@ -1,5 +1,6 @@
 package com.imagent.common.protocol.payload;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,8 +14,11 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AgentApprovalCardPayload {
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long taskId;
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long approvalId;
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long conversationId;
     private String actionName;
     private String summary;

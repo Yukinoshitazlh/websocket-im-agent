@@ -23,7 +23,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Netty WebSocket 服务端优雅启停骨架（实现 SmartLifecycle 与 Spring 生命周期绑定）
- * 阶段 1 将在此补充 JWT 握手鉴权 Handler、心跳处理 Handler 与业务分发 Handler。
  */
 @Slf4j
 @Component
@@ -31,6 +30,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class NettyServerBootstrap implements SmartLifecycle {
 
     private final GatewayProperties properties;
+    private final JwtHandshakeAuthHandler jwtHandshakeAuthHandler;
+    private final WsFrameDispatchHandler wsFrameDispatchHandler;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     private EventLoopGroup bossGroup;
@@ -61,9 +62,9 @@ public class NettyServerBootstrap implements SmartLifecycle {
                                     .addLast(new HttpServerCodec())
                                     .addLast(new HttpObjectAggregator(65536))
                                     .addLast(new IdleStateHandler(properties.getReaderIdleSeconds(), 0, 0, TimeUnit.SECONDS))
-                                    // TODO(阶段 1): 在握手前插入 JwtHandshakeAuthHandler
-                                    .addLast(new WebSocketServerProtocolHandler(properties.getWsPath(), null, true, 65536));
-                                    // TODO(阶段 1): 插入 WsFrameDispatchHandler
+                                    .addLast(jwtHandshakeAuthHandler)
+                                    .addLast(new WebSocketServerProtocolHandler(properties.getWsPath(), null, true, 65536))
+                                    .addLast(wsFrameDispatchHandler);
                         }
                     });
 
