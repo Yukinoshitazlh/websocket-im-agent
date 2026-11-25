@@ -200,12 +200,19 @@ async function handleMarkdownClick(ev: MouseEvent) {
   display: flex;
   justify-content: center;
   margin: 8px 0;
+  animation: recall-in 0.45s var(--ease-out);
+}
+
+@keyframes recall-in {
+  from { opacity: 0; filter: blur(4px); transform: scale(0.94); }
+  to { opacity: 1; filter: none; transform: none; }
 }
 
 .recalled-pill {
   font-size: 12px;
   color: var(--ink-muted);
-  background: var(--hover);
+  background: var(--surface);
+  border: 1px solid var(--border);
   padding: 3px 12px;
   border-radius: 999px;
 }
@@ -214,15 +221,51 @@ async function handleMarkdownClick(ev: MouseEvent) {
   display: flex;
   justify-content: center;
   margin: 12px 0;
+  animation: pop-in 0.55s var(--ease-spring);
 }
 
 .reminder-card {
+  position: relative;
   width: 100%;
   max-width: 540px;
   background: var(--reminder-soft);
   border: 1px solid var(--reminder-border);
-  border-radius: 12px;
-  padding: 11px 14px;
+  border-radius: 16px;
+  padding: 12px 15px;
+  overflow: hidden;
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  backdrop-filter: blur(14px) saturate(170%);
+  box-shadow: 0 10px 28px rgba(47, 91, 255, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.reminder-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: skewX(-18deg);
+  animation: reminder-sheen 1.6s var(--ease-out) 0.3s;
+  pointer-events: none;
+}
+
+@keyframes reminder-sheen {
+  to { left: 130%; }
+}
+
+.reminder-head :deep(svg) {
+  transform-origin: top center;
+  animation: bell-ring 1s ease-in-out 0.2s 2;
+}
+
+@keyframes bell-ring {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(16deg); }
+  40% { transform: rotate(-14deg); }
+  60% { transform: rotate(8deg); }
+  80% { transform: rotate(-4deg); }
 }
 
 .reminder-head {
@@ -258,6 +301,13 @@ async function handleMarkdownClick(ev: MouseEvent) {
   gap: 10px;
   margin-top: 14px;
   align-items: flex-start;
+  transform-origin: left bottom;
+  animation: msg-in-left 0.42s var(--ease-spring) both;
+}
+
+.msg-row.mine {
+  transform-origin: right bottom;
+  animation-name: msg-in-right;
 }
 
 .msg-row.grouped {
@@ -339,26 +389,49 @@ async function handleMarkdownClick(ev: MouseEvent) {
 }
 
 .bubble {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  position: relative;
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
   color: var(--ink);
-  border-radius: 12px;
-  padding: 9px 13px;
-  box-shadow: var(--shadow-sm);
+  border-radius: 18px 18px 18px 6px;
+  padding: 9px 14px;
+  box-shadow: 0 4px 14px rgba(34, 52, 110, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.55);
   word-break: break-word;
   max-width: 100%;
+  transition: transform 0.35s var(--ease-spring), box-shadow 0.3s var(--ease-out);
+}
+
+.msg-row.grouped .bubble {
+  border-radius: 18px 18px 18px 6px;
+}
+
+.msg-row:hover .bubble {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(34, 52, 110, 0.13), inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .bubble-mine {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-grad);
+  border-color: rgba(255, 255, 255, 0.22);
   color: #fff;
+  border-radius: 18px 18px 6px 18px;
+  box-shadow: 0 6px 18px rgba(58, 107, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.msg-row.grouped .bubble-mine {
+  border-radius: 18px 18px 6px 18px;
+}
+
+.msg-row:hover .bubble-mine {
+  box-shadow: 0 10px 26px rgba(58, 107, 255, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .bubble-ai {
   background: var(--ai-soft);
   border-color: var(--ai-border);
   color: var(--ai-ink);
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  backdrop-filter: blur(14px) saturate(170%);
 }
 
 .bubble-media {
@@ -410,9 +483,15 @@ async function handleMarkdownClick(ev: MouseEvent) {
   display: block;
   max-width: 280px;
   max-height: 240px;
-  border-radius: 8px;
+  border-radius: 13px;
   cursor: zoom-in;
   object-fit: cover;
+  transition: transform 0.4s var(--ease-spring), filter 0.3s;
+}
+
+.msg-image:hover {
+  transform: scale(1.025);
+  filter: saturate(1.1);
 }
 
 .media-tag {
@@ -483,35 +562,52 @@ async function handleMarkdownClick(ev: MouseEvent) {
 
 .hover-actions {
   display: flex;
-  gap: 3px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
+  box-shadow: 0 6px 18px rgba(34, 52, 110, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
   opacity: 0;
-  transition: opacity 0.14s;
+  transform: scale(0.85) translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.2s var(--ease-out), transform 0.35s var(--ease-spring);
 }
 
 .msg-row:hover .hover-actions {
   opacity: 1;
+  transform: none;
+  pointer-events: auto;
 }
 
 .action-btn {
   width: 26px;
   height: 26px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border-radius: 8px;
+  border: none;
+  background: transparent;
   color: var(--ink-secondary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: background 0.2s, color 0.2s, transform 0.3s var(--ease-spring);
 }
 
 .action-btn:hover {
   background: var(--hover);
-  color: var(--ink);
+  color: var(--accent);
+  transform: scale(1.12);
+}
+
+.action-btn:active {
+  transform: scale(0.88);
 }
 
 .action-btn.danger:hover {
   color: var(--danger);
-  border-color: var(--danger);
+  background: rgba(224, 49, 59, 0.12);
 }
 </style>

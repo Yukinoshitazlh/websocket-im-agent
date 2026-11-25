@@ -70,6 +70,16 @@ const htmlContent = computed(() => renderMarkdownSafe(props.stream.text));
   gap: 10px;
   margin-top: 14px;
   align-items: flex-start;
+  animation: msg-in-left 0.45s var(--ease-spring) both;
+}
+
+.stream-row > .avatar {
+  animation: ai-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes ai-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(18, 180, 140, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+  50% { box-shadow: 0 0 0 7px rgba(18, 180, 140, 0), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
 }
 
 .stream-col {
@@ -110,24 +120,59 @@ const htmlContent = computed(() => renderMarkdownSafe(props.stream.text));
 }
 
 .stream-bubble {
+  position: relative;
   background: var(--ai-soft);
-  border: 1px dashed var(--ai-border);
   color: var(--ai-ink);
-  border-radius: 12px;
+  border-radius: 18px 18px 18px 6px;
   padding: 10px 14px;
+  -webkit-backdrop-filter: blur(14px) saturate(170%);
+  backdrop-filter: blur(14px) saturate(170%);
+  box-shadow: 0 6px 20px rgba(18, 180, 140, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+/* 流动渐变描边：表示 SSE 正在持续输出 */
+.stream-bubble::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(90deg, #12B48C, #3A6BFF, #8466FF, #12B48C);
+  background-size: 200% 100%;
+  animation: border-flow 2.4s linear infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.stream-bubble .md-body > :last-child::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  background: var(--ai);
+  animation: caret-blink 1s steps(2) infinite;
+}
+
+@keyframes caret-blink {
+  50% { opacity: 0; }
 }
 
 .stream-placeholder {
   font-size: 13px;
-  color: var(--ink-secondary);
+  background: linear-gradient(90deg, var(--ink-muted) 0%, var(--ai) 50%, var(--ink-muted) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: border-flow 1.8s linear infinite;
 }
 
 .spin {
   animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>

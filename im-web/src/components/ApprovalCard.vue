@@ -57,16 +57,26 @@ const emit = defineEmits<{
 .approval-wrap {
   margin: 12px 0 6px 42px;
   max-width: 540px;
+  animation: pop-in 0.55s var(--ease-spring) both;
 }
 
 .approval-card {
   background: var(--warn-soft);
   border: 1px solid var(--warn-border);
-  border-radius: 12px;
-  padding: 12px 14px;
+  border-radius: 18px;
+  padding: 13px 15px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  backdrop-filter: blur(16px) saturate(170%);
+  box-shadow: 0 10px 28px rgba(245, 158, 11, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  animation: approval-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes approval-glow {
+  0%, 100% { box-shadow: 0 10px 28px rgba(245, 158, 11, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.5); }
+  50% { box-shadow: 0 10px 34px rgba(245, 158, 11, 0.3), 0 0 0 4px rgba(245, 158, 11, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.5); }
 }
 
 .approval-head {
@@ -102,6 +112,7 @@ const emit = defineEmits<{
 .decided-pill {
   font-size: 12px;
   font-weight: 600;
+  animation: pop-in 0.4s var(--ease-spring);
 }
 
 .decided-pill.approved {

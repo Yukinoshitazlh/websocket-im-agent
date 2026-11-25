@@ -4,6 +4,7 @@ import { LogOut, Moon, Plus, Search, Sun, Users, Wifi, WifiOff } from 'lucide-vu
 import { useChatStore } from '../stores/chat';
 import type { UserProfile } from '../types/im';
 import { avatarColor, avatarInitial, formatTimeShort } from '../utils/format';
+import { vGlow } from '../directives/glow';
 
 const emit = defineEmits<{
   (e: 'open-group-modal'): void;
@@ -47,7 +48,7 @@ async function handlePickUser(user: UserProfile) {
 </script>
 
 <template>
-  <aside class="sidebar">
+  <aside v-glow class="sidebar glass">
     <!-- 顶部个人信息 -->
     <div class="profile-bar">
       <div class="profile-left">
@@ -156,10 +157,12 @@ async function handlePickUser(user: UserProfile) {
     </div>
 
     <!-- 会话列表 -->
-    <div class="conv-list">
+    <div class="conv-scroll">
       <div v-if="store.conversations.length === 0" class="conv-empty">
         暂无会话，搜索用户名发起单聊或点击「建群」
       </div>
+
+      <TransitionGroup tag="div" name="conv" class="conv-list">
 
       <button
         v-for="conv in store.conversations"
@@ -185,12 +188,13 @@ async function handlePickUser(user: UserProfile) {
           </div>
           <div class="conv-bottom">
             <span class="conv-preview">{{ conv.lastMsgPreview || '暂无消息' }}</span>
-            <span v-if="conv.unreadCount > 0" class="unread-badge tabular">
+            <span v-if="conv.unreadCount > 0" :key="conv.unreadCount" class="unread-badge tabular">
               {{ conv.unreadCount > 99 ? '99+' : conv.unreadCount }}
             </span>
           </div>
         </div>
       </button>
+      </TransitionGroup>
     </div>
   </aside>
 </template>
@@ -199,11 +203,20 @@ async function handlePickUser(user: UserProfile) {
 .sidebar {
   width: 296px;
   flex-shrink: 0;
-  background: var(--rail);
-  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   height: 100%;
+  border-radius: var(--radius-panel);
+  animation: rise-in 0.7s var(--ease-out) both;
+}
+
+.sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar > .search-row {
+  z-index: 10;
 }
 
 .profile-bar {
@@ -347,15 +360,19 @@ async function handlePickUser(user: UserProfile) {
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(100% + 6px);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: 9px;
-  box-shadow: var(--shadow-md);
+  top: calc(100% + 8px);
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
   z-index: 30;
   max-height: 240px;
   overflow-y: auto;
-  padding: 4px;
+  padding: 5px;
+  transform-origin: top center;
+  animation: pop-in 0.35s var(--ease-spring);
 }
 
 .search-empty {
@@ -398,13 +415,17 @@ async function handlePickUser(user: UserProfile) {
   flex-shrink: 0;
 }
 
-.conv-list {
+.conv-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 6px 8px;
+  padding: 8px;
+}
+
+.conv-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .conv-empty {
@@ -423,18 +444,47 @@ async function handlePickUser(user: UserProfile) {
   align-items: center;
   gap: 10px;
   padding: 9px 10px;
-  border-radius: 10px;
+  border-radius: 14px;
+  border: 1px solid transparent;
   cursor: pointer;
   text-align: left;
-  transition: background 0.12s;
+  transition:
+    background 0.25s var(--ease-out),
+    border-color 0.25s,
+    box-shadow 0.35s var(--ease-out),
+    transform 0.4s var(--ease-spring);
 }
 
 .conv-item:hover {
   background: var(--hover);
+  transform: translateX(3px);
+}
+
+.conv-item:active {
+  transform: scale(0.97);
+  transition-duration: 0.08s;
 }
 
 .conv-item.active {
-  background: var(--accent-soft);
+  background: var(--surface-strong);
+  border-color: var(--glass-edge);
+  box-shadow: 0 6px 20px rgba(34, 52, 110, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.conv-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent-grad);
+  animation: pop-in 0.4s var(--ease-spring);
+}
+
+.conv-item {
+  position: relative;
 }
 
 .conv-body {
@@ -482,12 +532,19 @@ async function handlePickUser(user: UserProfile) {
 }
 
 .unread-badge {
-  background: var(--danger);
+  background: linear-gradient(135deg, #FF5A65, #E0313B);
   color: #fff;
   font-size: 10.5px;
   font-weight: 700;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 999px;
   flex-shrink: 0;
+  box-shadow: 0 3px 10px rgba(224, 49, 59, 0.35);
+  animation: badge-pop 0.5s var(--ease-spring);
+}
+
+@keyframes badge-pop {
+  0% { transform: scale(0.3); }
+  100% { transform: scale(1); }
 }
 </style>

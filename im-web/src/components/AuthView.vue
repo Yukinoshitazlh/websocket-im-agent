@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { Moon, Sparkles, Sun } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
+import { vGlow } from '../directives/glow';
 
 const store = useChatStore();
 
@@ -51,7 +52,7 @@ async function handleSubmit() {
       <Sun v-else :size="16" />
     </button>
 
-    <div class="auth-grid">
+    <div v-glow class="auth-grid glass">
       <section class="brand-panel">
         <div class="brand-mark">
           <div class="brand-logo">P</div>
@@ -84,6 +85,7 @@ async function handleSubmit() {
 
       <section class="form-panel">
         <div class="tab-bar">
+          <span class="tab-slider" :class="{ right: mode === 'register' }" />
           <button
             type="button"
             class="tab-btn"
@@ -108,10 +110,12 @@ async function handleSubmit() {
             <input v-model="username" class="input" placeholder="如 alice / bob" autocomplete="username" />
           </label>
 
-          <label v-if="mode === 'register'" class="field">
-            <span>昵称</span>
-            <input v-model="nickname" class="input" placeholder="用于聊天显示的昵称" />
-          </label>
+          <Transition name="slide-up">
+            <label v-if="mode === 'register'" class="field">
+              <span>昵称</span>
+              <input v-model="nickname" class="input" placeholder="用于聊天显示的昵称" />
+            </label>
+          </Transition>
 
           <label class="field">
             <span>密码</span>
@@ -124,7 +128,9 @@ async function handleSubmit() {
             />
           </label>
 
-          <div v-if="errorMsg" class="error-box">{{ errorMsg }}</div>
+          <Transition name="slide-up">
+            <div v-if="errorMsg" :key="errorMsg" class="error-box">{{ errorMsg }}</div>
+          </Transition>
 
           <button type="submit" class="btn btn-primary submit-btn" :disabled="loading">
             <Sparkles :size="15" />
@@ -152,7 +158,6 @@ async function handleSubmit() {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: var(--canvas);
   position: relative;
 }
 
@@ -160,19 +165,35 @@ async function handleSubmit() {
   position: fixed;
   top: 18px;
   right: 18px;
+  z-index: 5;
 }
 
 .auth-grid {
   width: 100%;
-  max-width: 920px;
+  max-width: 940px;
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 28px;
   overflow: hidden;
-  box-shadow: var(--shadow-md);
+  animation: rise-in 0.9s var(--ease-out) both;
 }
+
+.auth-grid > section {
+  position: relative;
+  z-index: 1;
+}
+
+.brand-panel > *,
+.form-panel > * {
+  animation: rise-in 0.8s var(--ease-out) both;
+}
+
+.brand-panel > *:nth-child(2) { animation-delay: 0.08s; }
+.brand-panel > *:nth-child(3) { animation-delay: 0.16s; }
+.brand-panel > *:nth-child(4) { animation-delay: 0.24s; }
+.form-panel > *:nth-child(1) { animation-delay: 0.18s; }
+.form-panel > *:nth-child(2) { animation-delay: 0.26s; }
+.form-panel > *:nth-child(3) { animation-delay: 0.34s; }
 
 .brand-panel {
   padding: 40px 36px;
@@ -191,16 +212,30 @@ async function handleSubmit() {
 }
 
 .brand-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  background: var(--accent);
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: var(--accent-grad);
   color: #fff;
   font-weight: 800;
   font-size: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 8px 22px rgba(58, 107, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  animation: logo-breathe 4.5s ease-in-out infinite;
+}
+
+@keyframes logo-breathe {
+  0%, 100% { transform: translateY(0) rotate(0); border-radius: 13px; }
+  50% { transform: translateY(-3px) rotate(-4deg); border-radius: 16px 11px 15px 12px; }
+}
+
+.hero-title {
+  background: linear-gradient(120deg, var(--ink) 30%, var(--accent) 70%, var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .brand-name {
@@ -237,12 +272,19 @@ async function handleSubmit() {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 11px 13px;
+  border-radius: 14px;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-sm);
   font-size: 12.5px;
   color: var(--ink-secondary);
+  transition: transform 0.4s var(--ease-spring), box-shadow 0.3s;
+}
+
+.feature-item:hover {
+  transform: translateX(4px);
+  box-shadow: 0 8px 22px rgba(34, 52, 110, 0.12);
 }
 
 .feature-tag {
@@ -262,29 +304,47 @@ async function handleSubmit() {
 }
 
 .tab-bar {
+  position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
   padding: 4px;
   background: var(--rail);
-  border-radius: 9px;
+  border-radius: 14px;
   border: 1px solid var(--border);
 }
 
+.tab-slider {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
+  box-shadow: 0 4px 14px rgba(34, 52, 110, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  transition: transform 0.5s var(--ease-spring);
+}
+
+.tab-slider.right {
+  transform: translateX(100%);
+}
+
 .tab-btn {
+  position: relative;
+  z-index: 1;
   border: none;
   background: transparent;
   color: var(--ink-secondary);
   font-weight: 600;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: 10px;
   cursor: pointer;
+  transition: color 0.3s;
 }
 
 .tab-btn.active {
-  background: var(--surface);
   color: var(--ink);
-  box-shadow: var(--shadow-sm);
 }
 
 .auth-form {
@@ -304,16 +364,26 @@ async function handleSubmit() {
 
 .error-box {
   padding: 8px 11px;
-  border-radius: 7px;
+  border-radius: 10px;
+  animation: shake 0.45s var(--ease-out);
   background: rgba(220, 38, 38, 0.1);
   color: var(--danger);
   font-size: 12.5px;
 }
 
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
 .submit-btn {
   width: 100%;
-  padding: 10px 14px;
+  padding: 11px 14px;
   margin-top: 4px;
+  border-radius: 12px;
 }
 
 .demo-accounts {

@@ -120,7 +120,9 @@ onMounted(loadCandidates);
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.52);
+  background: rgba(12, 18, 36, 0.28);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,12 +131,15 @@ onMounted(loadCandidates);
 }
 
 .modal-box {
+  position: relative;
   width: 100%;
   max-width: 440px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: var(--shadow-md);
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
+  border-radius: 24px;
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  backdrop-filter: blur(30px) saturate(190%);
   overflow: hidden;
 }
 
@@ -186,8 +191,19 @@ onMounted(loadCandidates);
   align-items: center;
   gap: 10px;
   padding: 7px 8px;
-  border-radius: 7px;
+  border-radius: 11px;
   cursor: pointer;
+  transition: background 0.2s, transform 0.35s var(--ease-spring);
+}
+
+.member-row:active {
+  transform: scale(0.97);
+}
+
+.member-row input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
 }
 
 .member-row:hover {
