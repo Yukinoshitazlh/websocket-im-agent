@@ -6,6 +6,7 @@ import com.imagent.server.dto.MessageVO;
 import com.imagent.server.service.MessageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -20,11 +21,26 @@ public class MessageController {
 
     private final MessageService messageService;
 
+    /**
+     * 游标分页历史记录：不传 beforeSeq 拉取最新；传入 beforeSeq 向上加载更早消息（无 OFFSET 深分页问题）
+     */
     @GetMapping("/history")
     public Result<List<MessageVO>> history(
             @RequestParam Long conversationId,
-            @RequestParam(defaultValue = "50") int limit) {
-        return Result.ok(messageService.listHistory(UserContext.getUserId(), conversationId, limit));
+            @RequestParam(required = false) Long beforeSeq,
+            @RequestParam(defaultValue = "30") int limit) {
+        return Result.ok(messageService.listHistory(UserContext.getUserId(), conversationId, beforeSeq, limit));
+    }
+
+    /**
+     * 会话内历史消息搜索
+     */
+    @GetMapping("/search")
+    public Result<List<MessageVO>> search(
+            @RequestParam Long conversationId,
+            @RequestParam String keyword,
+            @RequestParam(defaultValue = "30") int limit) {
+        return Result.ok(messageService.searchMessages(UserContext.getUserId(), conversationId, keyword, limit));
     }
 
     /**
@@ -44,6 +60,15 @@ public class MessageController {
     @PostMapping("/ack")
     public Result<Void> ackRead(@RequestParam Long conversationId, @RequestParam Long seq) {
         messageService.ackRead(UserContext.getUserId(), conversationId, seq);
+        return Result.ok();
+    }
+
+    /**
+     * 2 分钟内撤回自己发送的消息
+     */
+    @PostMapping("/{msgId}/recall")
+    public Result<Void> recall(@PathVariable Long msgId) {
+        messageService.recallMessage(UserContext.getUserId(), msgId);
         return Result.ok();
     }
 }

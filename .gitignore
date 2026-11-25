@@ -27,3 +27,6 @@ dist/
 # Personal notes & Office temp files
 *.docx
 ~$*
+
+# Local fallback file uploads
+uploads/

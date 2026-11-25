@@ -5,6 +5,7 @@ import com.imagent.common.protocol.payload.ServerAckPayload;
 import com.imagent.server.dto.InternalAgentReplyRequest;
 import com.imagent.server.dto.InternalChatSendRequest;
 import com.imagent.server.dto.InternalMsgAckRequest;
+import com.imagent.server.dto.InternalTypingRequest;
 import com.imagent.server.service.MessageService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -37,5 +38,11 @@ public class InternalMessageController {
     @PostMapping("/agent-reply")
     public Result<ServerAckPayload> agentReply(@Valid @RequestBody InternalAgentReplyRequest request) {
         return Result.ok(messageService.persistAgentReply(request));
+    }
+
+    @PostMapping("/typing")
+    public Result<Void> typing(@Valid @RequestBody InternalTypingRequest request) {
+        messageService.broadcastTyping(request.getUserId(), request.getConversationId(), Boolean.TRUE.equals(request.getTyping()));
+        return Result.ok();
     }
 }

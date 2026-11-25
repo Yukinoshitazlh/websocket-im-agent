@@ -27,5 +27,9 @@ public class ChatPushPayload {
     private String content;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long replyToMsgId;
+    private String replyToSender;
+    private String replyToContent;
+    private String extra;
+    private Integer status;
     private Long createdAt;
 }

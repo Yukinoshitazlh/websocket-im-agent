@@ -51,7 +51,25 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  # 对象存储 MinIO（图片/文件消息存储；避开网关 9001/9002，映射 9100 API 与 9101 控制台）
+  # 启动方式：docker compose --profile storage up -d（未启动时后端自动无缝降级到本地 uploads 目录）
+  minio:
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+    container_name: im-minio
+    restart: unless-stopped
+    profiles: ["storage"]
+    ports:
+      - "${MINIO_API_PORT:-9100}:9000"
+      - "${MINIO_CONSOLE_PORT:-9101}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-im_minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-im_minio_123456}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
 volumes:
   redis_data:
   rabbitmq_data:
   qdrant_data:
+  minio_data:

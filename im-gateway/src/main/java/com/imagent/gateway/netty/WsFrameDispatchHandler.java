@@ -12,6 +12,7 @@ import com.imagent.common.protocol.payload.AgentCancelPayload;
 import com.imagent.common.protocol.payload.ChatSendPayload;
 import com.imagent.common.protocol.payload.MsgAckPayload;
 import com.imagent.common.protocol.payload.ServerAckPayload;
+import com.imagent.common.protocol.payload.TypingPayload;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
@@ -103,6 +104,10 @@ public class WsFrameDispatchHandler extends SimpleChannelInboundHandler<TextWebS
                     MsgAckPayload payload = objectMapper.treeToValue(packet.getData(), MsgAckPayload.class);
                     handleMsgAckAsync(userId, payload);
                 }
+                case TYPING -> {
+                    TypingPayload payload = objectMapper.treeToValue(packet.getData(), TypingPayload.class);
+                    handleTypingAsync(userId, payload);
+                }
                 case AGENT_CANCEL -> {
                     AgentCancelPayload payload = objectMapper.treeToValue(packet.getData(), AgentCancelPayload.class);
                     handleAgentCancelAsync(ctx.channel(), userId, packet.getRequestId(), payload);
@@ -166,6 +171,28 @@ public class WsFrameDispatchHandler extends SimpleChannelInboundHandler<TextWebS
             } catch (Exception e) {
                 log.warn("转发 MSG_ACK 到 im-server 失败: userId={}, convId={}, err={}",
                         userId, payload.getConversationId(), e.getMessage());
+            }
+        });
+    }
+
+    private void handleTypingAsync(Long userId, TypingPayload payload) {
+        if (payload == null || payload.getConversationId() == null) {
+            return;
+        }
+        businessExecutor.execute(() -> {
+            try {
+                imServerRestClient.post()
+                        .uri("/internal/messages/typing")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of(
+                                "userId", userId,
+                                "conversationId", payload.getConversationId(),
+                                "typing", Boolean.TRUE.equals(payload.getTyping())
+                        ))
+                        .retrieve()
+                        .toBodilessEntity();
+            } catch (Exception e) {
+                log.debug("转发 TYPING 瞬时信令失败: {}", e.getMessage());
             }
         });
     }

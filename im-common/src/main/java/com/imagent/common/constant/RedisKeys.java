@@ -72,4 +72,9 @@ public final class RedisKeys {
     public static String agentDailyQuota(Long userId, String yyyyMMdd) {
         return "im:rl:agent:daily:" + userId + ":" + yyyyMMdd;
     }
+
+    /** 群日程提醒延迟队列 ZSet（score = 触发时间戳 ms，member = reminderId） */
+    public static String reminderDelayZSet() {
+        return "im:delay:reminders";
+    }
 }

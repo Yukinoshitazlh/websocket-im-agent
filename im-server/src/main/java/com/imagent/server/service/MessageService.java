@@ -11,9 +11,12 @@ import com.imagent.common.protocol.WsPacket;
 import com.imagent.common.protocol.WsPacketType;
 import com.imagent.common.protocol.payload.ChatPushPayload;
 import com.imagent.common.protocol.payload.ChatSendPayload;
+import com.imagent.common.protocol.payload.MsgRecallPayload;
 import com.imagent.common.protocol.payload.ServerAckPayload;
+import com.imagent.common.protocol.payload.TypingPayload;
 import com.imagent.server.dto.InternalAgentReplyRequest;
 import com.imagent.server.dto.MessageVO;
+import com.imagent.server.entity.ImGroupReminder;
 import com.imagent.server.entity.ImMessage;
 import com.imagent.server.entity.ImUser;
 import com.imagent.server.mapper.ImConversationMapper;
@@ -28,12 +31,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
@@ -43,6 +51,8 @@ import java.util.stream.Collectors;
 public class MessageService {
 
     private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(10);
+    private static final long RECALL_WINDOW_SECONDS = 120L;
+    private static final DateTimeFormatter REMIND_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final ImMessageMapper messageMapper;
     private final ImConversationMapper conversationMapper;
@@ -89,20 +99,48 @@ public class MessageService {
         this.pushDispatchExecutor = pushDispatchExecutor;
     }
 
-    public List<MessageVO> listHistory(Long userId, Long conversationId, int limit) {
+    /**
+     * 游标分页拉取历史消息：基于 uk_conv_seq (conversation_id, seq) 走索引范围扫描，避免 OFFSET 深分页
+     */
+    public List<MessageVO> listHistory(Long userId, Long conversationId, Long beforeSeq, int limit) {
         if (!conversationService.isMember(conversationId, userId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
         }
         int safeLimit = Math.min(Math.max(limit, 1), 100);
+        LambdaQueryWrapper<ImMessage> wrapper = new LambdaQueryWrapper<ImMessage>()
+                .eq(ImMessage::getConversationId, conversationId)
+                .lt(beforeSeq != null && beforeSeq > 0, ImMessage::getSeq, beforeSeq)
+                .orderByDesc(ImMessage::getSeq)
+                .last("LIMIT " + safeLimit);
+        List<ImMessage> messages = messageMapper.selectList(wrapper);
+        if (messages.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Collections.reverse(messages);
+        return toMessageVOs(messages);
+    }
+
+    /**
+     * 会话内历史关键词搜索（强校验会话成员权限，跳过已撤回消息）
+     */
+    public List<MessageVO> searchMessages(Long userId, Long conversationId, String keyword, int limit) {
+        if (!conversationService.isMember(conversationId, userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
+        }
+        if (keyword == null || keyword.isBlank()) {
+            return Collections.emptyList();
+        }
+        int safeLimit = Math.min(Math.max(limit, 1), 50);
         List<ImMessage> messages = messageMapper.selectList(
                 new LambdaQueryWrapper<ImMessage>()
                         .eq(ImMessage::getConversationId, conversationId)
+                        .eq(ImMessage::getStatus, 1)
+                        .like(ImMessage::getContent, keyword.trim())
                         .orderByDesc(ImMessage::getSeq)
                         .last("LIMIT " + safeLimit));
         if (messages.isEmpty()) {
             return Collections.emptyList();
         }
-        Collections.reverse(messages);
         return toMessageVOs(messages);
     }
 
@@ -138,17 +176,78 @@ public class MessageService {
     }
 
     /**
+     * 消息撤回：校验发送者本人 + 2 分钟时间窗，更新 status=2 并全会话广播 MSG_RECALL 信令
+     */
+    public void recallMessage(Long userId, Long msgId) {
+        ImMessage msg = messageMapper.selectById(msgId);
+        if (msg == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "消息不存在");
+        }
+        if (!userId.equals(msg.getSenderId())) {
+            throw new BizException(ErrorCode.FORBIDDEN, "只能撤回自己发送的消息");
+        }
+        if (Integer.valueOf(2).equals(msg.getStatus())) {
+            return;
+        }
+        if (msg.getCreatedAt() != null
+                && Duration.between(msg.getCreatedAt(), LocalDateTime.now()).toSeconds() > RECALL_WINDOW_SECONDS) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "发送超过 2 分钟的消息不可撤回");
+        }
+
+        ImMessage update = new ImMessage();
+        update.setId(msgId);
+        update.setStatus(2);
+        update.setContent("已撤回一条消息");
+        messageMapper.updateById(update);
+
+        String operatorNickname = userService.getNicknameCached(userId);
+        List<Long> memberIds = conversationService.listMemberIds(msg.getConversationId());
+        MsgRecallPayload recallPayload = MsgRecallPayload.builder()
+                .conversationId(msg.getConversationId())
+                .msgId(msgId)
+                .seq(msg.getSeq())
+                .operatorId(userId)
+                .operatorNickname(operatorNickname)
+                .build();
+
+        pushDispatchExecutor.execute(() ->
+                dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.MSG_RECALL, recallPayload)));
+    }
+
+    /**
+     * 正在输入瞬时信令（TYPING）：零 DB 写入、零 seq 分配、仅查 Redis 缓存并向会话其他在线成员内存推送
+     */
+    public void broadcastTyping(Long userId, Long conversationId, boolean typing) {
+        List<Long> memberIds = conversationService.listMemberIds(conversationId);
+        if (!memberIds.contains(userId)) {
+            return;
+        }
+        List<Long> targets = memberIds.stream().filter(id -> !id.equals(userId)).toList();
+        if (targets.isEmpty()) {
+            return;
+        }
+        String nickname = userService.getNicknameCached(userId);
+        TypingPayload payload = TypingPayload.builder()
+                .conversationId(conversationId)
+                .userId(userId)
+                .nickname(nickname)
+                .typing(typing)
+                .build();
+        pushDispatchExecutor.execute(() ->
+                dispatchPushToMembers(targets, WsPacket.of(WsPacketType.TYPING, payload)));
+    }
+
+    /**
      * 可靠消息受理：
      * 1. Redis 幂等缓存拦截弱网重传；
      * 2. TransactionTemplate 事务内分配并发安全 seq 并落库（MySQL 唯一索引 uk_sender_client_msg 兜底并发重传）；
-     * 3. 事务提交后再递增未读数与投递 MQ，避免消费端/客户端拉取到未提交事务数据。
+     * 3. 事务提交后卸载至平台线程池异步递增未读数与投递 RabbitMQ。
      */
     public ServerAckPayload processIncomingMessage(Long senderId, ChatSendPayload payload) {
         Long convId = payload.getConversationId();
         if (convId == null || payload.getContent() == null || payload.getContent().isBlank()) {
             throw new BizException(ErrorCode.BAD_REQUEST, "会话ID和消息内容不能为空");
         }
-        // 热路径仅从 Redis 缓存读取一次会话成员列表，同时完成权限校验与后续推送名单复用（消除 2 次 MySQL 查询）
         List<Long> memberIds = conversationService.listMemberIds(convId);
         if (!memberIds.contains(senderId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "无权向该会话发送消息");
@@ -158,7 +257,6 @@ public class MessageService {
                 ? UUID.randomUUID().toString()
                 : payload.getClientMsgId().trim();
 
-        // 1. Redis 快速幂等拦截（重传请求不消耗新限流令牌）
         String idempKey = RedisKeys.msgIdempotency(senderId, clientMsgId);
         ServerAckPayload cachedAck = readCachedAck(idempKey);
         if (cachedAck != null) {
@@ -167,16 +265,30 @@ public class MessageService {
             return cachedAck;
         }
 
-        // 1.5 普通消息发送令牌桶限流
         rateLimitService.checkChatSendAllowed(senderId);
 
-        // 若触发 @AI，在落库前先校验 @AI 独立频率与日配额限流
-        boolean triggerAgent = agentBridgeService.shouldTriggerAgent(payload.getMentionAgent(), payload.getContent());
+        String msgType = (payload.getMsgType() == null || payload.getMsgType().isBlank())
+                ? "TEXT" : payload.getMsgType().trim();
+        boolean triggerAgent = "TEXT".equals(msgType)
+                && agentBridgeService.shouldTriggerAgent(payload.getMentionAgent(), payload.getContent());
         if (triggerAgent) {
             rateLimitService.checkAgentTriggerAllowed(senderId);
         }
 
-        // 2. 事务内落库 + 数据库唯一索引兜底并发重传
+        // 若为引用回复，仅校验并提取被引用消息摘要（同会话内有效）
+        String replyToSender = null;
+        String replyToContent = null;
+        if (payload.getReplyToMsgId() != null) {
+            ImMessage target = messageMapper.selectById(payload.getReplyToMsgId());
+            if (target != null && convId.equals(target.getConversationId())) {
+                replyToSender = userService.getNicknameCached(target.getSenderId());
+                replyToContent = Integer.valueOf(2).equals(target.getStatus())
+                        ? "已撤回一条消息"
+                        : buildPreview(target.getMsgType(), target.getContent());
+            }
+        }
+
+        String preview = buildPreview(msgType, payload.getContent());
         ImMessage savedMessage;
         try {
             savedMessage = transactionTemplate.execute(status -> {
@@ -186,20 +298,17 @@ public class MessageService {
                 message.setSenderId(senderId);
                 message.setClientMsgId(clientMsgId);
                 message.setSeq(seq);
-                message.setMsgType(payload.getMsgType() == null ? "TEXT" : payload.getMsgType());
+                message.setMsgType(msgType);
                 message.setContent(payload.getContent());
                 message.setReplyToMsgId(payload.getReplyToMsgId());
+                message.setExtra(payload.getExtra());
                 message.setStatus(1);
                 messageMapper.insert(message);
 
-                String preview = payload.getContent().length() > 60
-                        ? payload.getContent().substring(0, 60) + "..."
-                        : payload.getContent();
                 conversationMapper.updateLastMessage(convId, seq, message.getId(), preview);
                 return message;
             });
         } catch (DuplicateKeyException e) {
-            // 极端并发场景：两条相同 clientMsgId 同时穿过 Redis，由 MySQL uk_sender_client_msg 兜底拦截
             log.warn("触发数据库唯一索引幂等兜底: senderId={}, clientMsgId={}", senderId, clientMsgId);
             ImMessage existing = messageMapper.selectOne(new LambdaQueryWrapper<ImMessage>()
                     .eq(ImMessage::getSenderId, senderId)
@@ -228,7 +337,6 @@ public class MessageService {
                 .seq(savedMessage.getSeq())
                 .build();
 
-        // 3. 事务已提交：写入幂等缓存，并将未读计数、RabbitMQ 跨节点推送与 @AI 投递卸载至平台线程池异步执行
         cacheAck(idempKey, ack);
 
         String senderNickname = userService.getNicknameCached(senderId);
@@ -242,6 +350,10 @@ public class MessageService {
                 .msgType(savedMessage.getMsgType())
                 .content(savedMessage.getContent())
                 .replyToMsgId(savedMessage.getReplyToMsgId())
+                .replyToSender(replyToSender)
+                .replyToContent(replyToContent)
+                .extra(savedMessage.getExtra())
+                .status(1)
                 .createdAt(System.currentTimeMillis())
                 .build();
 
@@ -300,6 +412,72 @@ public class MessageService {
                 .build();
     }
 
+    /**
+     * 供 Redis ZSet 延迟队列调度器调用：到期自动落库并向全会话实时推送日程提醒卡片
+     */
+    public void publishScheduledReminder(ImGroupReminder reminder) {
+        Long convId = reminder.getConversationId();
+        String clientMsgId = "reminder-fire-" + reminder.getId();
+        String timeStr = reminder.getRemindAt() != null ? reminder.getRemindAt().format(REMIND_FMT) : "";
+        String content = String.format("【日程提醒到点通知】%s\n%s\n计划时间：%s",
+                reminder.getTitle(), reminder.getContent(), timeStr);
+
+        ImMessage saved;
+        try {
+            saved = transactionTemplate.execute(status -> {
+                Long seq = seqGeneratorService.nextSeq(convId);
+                ImMessage message = new ImMessage();
+                message.setConversationId(convId);
+                message.setSenderId(AgentBridgeService.AI_ASSISTANT_USER_ID);
+                message.setClientMsgId(clientMsgId);
+                message.setSeq(seq);
+                message.setMsgType("REMINDER");
+                message.setContent(content);
+                message.setStatus(1);
+                messageMapper.insert(message);
+
+                conversationMapper.updateLastMessage(convId, seq, message.getId(), "[日程提醒] " + reminder.getTitle());
+                return message;
+            });
+        } catch (DuplicateKeyException e) {
+            log.info("日程提醒消息已推送过，跳过重复落库: reminderId={}", reminder.getId());
+            return;
+        }
+
+        if (saved == null) {
+            return;
+        }
+
+        List<Long> memberIds = conversationService.listMemberIds(convId);
+        ChatPushPayload pushPayload = ChatPushPayload.builder()
+                .msgId(saved.getId())
+                .conversationId(convId)
+                .senderId(AgentBridgeService.AI_ASSISTANT_USER_ID)
+                .senderNickname("AI 助手")
+                .clientMsgId(clientMsgId)
+                .seq(saved.getSeq())
+                .msgType("REMINDER")
+                .content(content)
+                .status(1)
+                .createdAt(System.currentTimeMillis())
+                .build();
+
+        pushDispatchExecutor.execute(() -> {
+            unreadService.incrementUnreadForMembers(convId, AgentBridgeService.AI_ASSISTANT_USER_ID, memberIds);
+            dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.CHAT_PUSH, pushPayload));
+        });
+    }
+
+    private String buildPreview(String msgType, String content) {
+        if ("IMAGE".equals(msgType)) {
+            return "[图片]";
+        }
+        if ("FILE".equals(msgType)) {
+            return "[文件] " + (content.length() > 40 ? content.substring(0, 40) : content);
+        }
+        return content.length() > 60 ? content.substring(0, 60) + "..." : content;
+    }
+
     private ServerAckPayload readCachedAck(String idempKey) {
         String json = redisTemplate.opsForValue().get(idempKey);
         if (json == null || json.isBlank()) {
@@ -322,22 +500,51 @@ public class MessageService {
     }
 
     private List<MessageVO> toMessageVOs(List<ImMessage> messages) {
-        List<Long> senderIds = messages.stream().map(ImMessage::getSenderId).distinct().toList();
-        Map<Long, String> nicknameMap = userMapper.selectBatchIds(senderIds).stream()
+        Set<Long> userIds = new HashSet<>();
+        List<Long> replyIds = new ArrayList<>();
+        for (ImMessage m : messages) {
+            userIds.add(m.getSenderId());
+            if (m.getReplyToMsgId() != null) {
+                replyIds.add(m.getReplyToMsgId());
+            }
+        }
+
+        Map<Long, ImMessage> replyMap = replyIds.isEmpty()
+                ? Collections.emptyMap()
+                : messageMapper.selectBatchIds(replyIds).stream()
+                .collect(Collectors.toMap(ImMessage::getId, m -> m, (a, b) -> a));
+        replyMap.values().forEach(r -> userIds.add(r.getSenderId()));
+
+        Map<Long, String> nicknameMap = userIds.isEmpty()
+                ? Collections.emptyMap()
+                : userMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(ImUser::getId, ImUser::getNickname, (a, b) -> a));
 
-        return messages.stream().map(m -> MessageVO.builder()
-                .id(m.getId())
-                .conversationId(m.getConversationId())
-                .senderId(m.getSenderId())
-                .senderNickname(nicknameMap.getOrDefault(m.getSenderId(), "用户" + m.getSenderId()))
-                .clientMsgId(m.getClientMsgId())
-                .seq(m.getSeq())
-                .msgType(m.getMsgType())
-                .content(m.getContent())
-                .replyToMsgId(m.getReplyToMsgId())
-                .createdAt(m.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
-                .build()).toList();
+        return messages.stream().map(m -> {
+            ImMessage replied = m.getReplyToMsgId() != null ? replyMap.get(m.getReplyToMsgId()) : null;
+            String replySender = replied != null
+                    ? nicknameMap.getOrDefault(replied.getSenderId(), "用户" + replied.getSenderId())
+                    : null;
+            String replyContent = replied != null
+                    ? (Integer.valueOf(2).equals(replied.getStatus()) ? "已撤回一条消息" : buildPreview(replied.getMsgType(), replied.getContent()))
+                    : null;
+            return MessageVO.builder()
+                    .id(m.getId())
+                    .conversationId(m.getConversationId())
+                    .senderId(m.getSenderId())
+                    .senderNickname(nicknameMap.getOrDefault(m.getSenderId(), "用户" + m.getSenderId()))
+                    .clientMsgId(m.getClientMsgId())
+                    .seq(m.getSeq())
+                    .msgType(m.getMsgType())
+                    .content(Integer.valueOf(2).equals(m.getStatus()) ? "已撤回一条消息" : m.getContent())
+                    .replyToMsgId(m.getReplyToMsgId())
+                    .replyToSender(replySender)
+                    .replyToContent(replyContent)
+                    .extra(m.getExtra())
+                    .status(Objects.requireNonNullElse(m.getStatus(), 1))
+                    .createdAt(m.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
+                    .build();
+        }).toList();
     }
 
     private void dispatchPushToMembers(List<Long> memberIds, WsPacket<?> packet) {

@@ -109,14 +109,20 @@
      * **500 并发双网关**：异常数 **`103 → 0`（100% 建连、100% 送达）**，吞吐 **`241.0 → 1,447.4 msg/s`（6 倍提升）**，`SERVER_ACK P99` **`5,291.0 → 298.7 ms`（`-94.4%`）**。
 * **源码**：`im-server/.../config/RabbitMqTopologyConfig.java`、`MessageService.java`、`ConversationService.java`、`im-gateway/.../config/GatewayInfraConfig.java`
 
+**Q17：群定时提醒的延迟调度、图片文件秒传和深翻页历史拉取是怎么做的？（进阶工程亮点）**
+* **Redis ZSet 延迟队列（防丢失 + 防重复）**：审批通过创建群提醒时，写入 `im_group_reminder` 并以 `remindAt` 毫秒时间戳作为 score 写入 Redis ZSet（`im:delay:reminders`）。`ReminderSchedulerService` 每 2 秒用 **Lua 脚本原子 `ZRANGEBYSCORE + ZREM`** 弹出到期 ID（避免多节点重复抢占），每 30 秒再跑一次 DB 兜底扫描防 Redis 重启丢失；最终触发推送前通过数据库乐观 CAS（`UPDATE ... SET status='SENT' WHERE id=? AND status='PENDING'`）确保全集群严格仅推送一次。
+* **WebCrypto SHA-256 文件秒传 + 存储降级**：上传前前端用浏览器原生 `crypto.subtle.digest('SHA-256', buf)` 计算哈希并先请求 `/api/files/instant-check`，命中 `im_file_object(uk_sha256)` 唯一索引直接返回已有 URL 实现零流量秒传；未命中再上传至 MinIO S3（支持无 MinIO 环境自动降级至本地磁盘 `/uploads/**`）。
+* **`beforeSeq` 游标分页与零 N+1 引用回复**：上拉加载更早历史不走 `LIMIT OFFSET`（避免深翻页扫描大量无效行），而是直接携带本地最小 `beforeSeq` 走联合索引 `(conversation_id, seq)` 范围查询；引用回复摘要通过单次 `IN (...)` 批量补全父消息，彻底避免列表页 N+1 查询。
+* **源码**：`im-server/.../service/ReminderSchedulerService.java`、`FileStorageService.java`、`MessageService.java`
+
 ---
 
 ## 三、2 分钟面试屏幕共享演示剧本
 
 1. **展示多模块启动与双网关**：IDEA 展示 `ServerApplication`（8080）、`GatewayApplication`（9001）、`GatewayApplication-2`（9002）、`AgentApplication`（8082）与 Docker Redis/RabbitMQ。
-2. **双开标签页跨网关互聊**：Alice 连 `gateway-1 (:9001)`，Bob 连 `gateway-2 (:9002)`，互发消息展示毫秒级跨机送达、未读红点与「弱网幂等重发测试」。
-3. **展示断线增量同步**：Alice 点「模拟断网」→ Bob 连发 2 条 → Alice 点「恢复联网」，自动补齐离线消息。
-4. **高潮展示 AI Agent 闭环**：
-   * 点快捷按钮 `@AI 流式长回复` → 生成中途点 **「停止生成」** 展示毫秒级打断与截断落库；
+2. **双开标签页跨网关互聊**：Alice 连 `gateway-1 (:9001)`，Bob 连 `gateway-2 (:9002)`，展示在线绿点、正在输入态（`TYPING`）、毫秒级跨机送达、2 分钟内消息撤回、引用回复与「弱网幂等重发测试」。
+3. **展示文件秒传与断线增量同步**：Ctrl+V 粘贴同一张截图发两次（第二次弹出「命中 SHA-256 秒传」）；Alice 点「模拟断网」→ Bob 连发 2 条 → Alice 点「恢复联网」自动补齐离线消息。
+4. **高潮展示 AI Agent 闭环与延迟队列**：
+   * 点快捷按钮 `@AI 流式长回复` → 展示 Markdown 代码高亮与一键复制，中途点 **「停止生成」** 展示毫秒级打断与截断落库；
    * 点 `@AI 总结群聊` → 展示调用权限隔离工具 `search_chat_history`；
-   * 点 `@AI 创建提醒` → 弹出琥珀色审批卡片 → 点 **「同意执行」** → 展开右侧 **「AI 观测与群提醒」** 面板，展示实时 TTFT、Token 消耗与落库的群日程提醒！
+   * 点 `@AI 15秒后定时提醒` → 弹出琥珀色审批卡片 → 点 **「同意执行」** → 展示右侧 **「AI 观测与日程」**（状态 `PENDING`）→ 等待 15 秒后 Redis ZSet 延迟队列自动向群内推送高亮提醒卡片，右侧状态自动变为 `SENT`！

@@ -18,6 +18,9 @@ public class ConversationVO {
     private Long currentSeq;
     private Long lastReadSeq;
     private Long unreadCount;
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private Long peerUserId;
+    private Boolean peerOnline;
     private String lastMsgPreview;
     private Long lastMsgTime;
 }

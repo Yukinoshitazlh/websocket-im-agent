@@ -149,6 +149,25 @@ CREATE TABLE IF NOT EXISTS im_group_reminder (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='群聊日程提醒表';
 
 -- ----------------------------------------------------------------------------
+-- 8. 文件对象元数据表（基于 SHA-256 唯一索引实现图片/文件秒传去重）
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS im_file_object (
+    id           BIGINT       NOT NULL COMMENT '文件ID',
+    sha256       CHAR(64)     NOT NULL COMMENT '文件内容 SHA-256 摘要（秒传唯一索引）',
+    file_name    VARCHAR(255) NOT NULL COMMENT '原始文件名',
+    content_type VARCHAR(128) NOT NULL DEFAULT 'application/octet-stream' COMMENT 'MIME 类型',
+    file_size    BIGINT       NOT NULL COMMENT '文件字节大小',
+    storage_type VARCHAR(16)  NOT NULL DEFAULT 'LOCAL' COMMENT 'MINIO / LOCAL',
+    object_key   VARCHAR(255) NOT NULL COMMENT '存储对象键/相对路径',
+    url          VARCHAR(512) NOT NULL COMMENT '前端可访问 URL',
+    uploader_id  BIGINT       NOT NULL COMMENT '首次上传用户ID',
+    created_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_sha256 (sha256),
+    KEY idx_uploader (uploader_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文件对象与秒传元数据表';
+
+-- ----------------------------------------------------------------------------
 -- 预置数据：内置 AI Agent 虚拟账号（固定 ID = 10000）
 -- ----------------------------------------------------------------------------
 INSERT IGNORE INTO im_user (id, username, password_hash, nickname, avatar, user_type, status)

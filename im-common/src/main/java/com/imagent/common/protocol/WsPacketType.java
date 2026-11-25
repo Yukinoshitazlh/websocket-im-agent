@@ -13,6 +13,8 @@ public enum WsPacketType {
     SERVER_ACK,
     CHAT_PUSH,
     MSG_ACK,
+    MSG_RECALL,
+    TYPING,
 
     // AI Agent 流式交互、打断与人机协同
     AGENT_STREAM,

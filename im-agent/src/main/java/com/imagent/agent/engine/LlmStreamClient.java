@@ -3,6 +3,7 @@ package com.imagent.agent.engine;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.imagent.agent.config.AgentProperties;
+import com.imagent.agent.tool.CreateGroupReminderTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
@@ -233,8 +234,7 @@ public class LlmStreamClient {
         String userPrompt = String.valueOf(lastMsg.getOrDefault("content", ""));
         if (containsAny(userPrompt, "提醒", "日程", "闹钟", "开会", "通知")) {
             String title = userPrompt.length() > 24 ? userPrompt.substring(0, 24) : userPrompt;
-            String remindTime = LocalDateTime.now().plusDays(1).withHour(10).withMinute(0).withSecond(0)
-                    .format(REMIND_FMT);
+            String remindTime = CreateGroupReminderTool.resolveRelativeOrDefault(userPrompt).format(REMIND_FMT);
             String argsJson;
             try {
                 argsJson = objectMapper.writeValueAsString(Map.of(

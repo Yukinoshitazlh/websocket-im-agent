@@ -120,7 +120,8 @@ public class ConversationService {
                 .map(ImConversation::getId)
                 .toList();
 
-        Map<Long, String> directTitleMap = resolveDirectTitles(directConvIds, userId);
+        Map<Long, ImUser> directPeerMap = resolveDirectPeers(directConvIds, userId);
+        Map<Long, Boolean> peerOnlineMap = resolveOnlineFlags(directPeerMap.values().stream().map(ImUser::getId).distinct().toList());
         Map<Long, Long> lastReadMap = memberships.stream()
                 .collect(Collectors.toMap(
                         ImConversationMember::getConversationId,
@@ -131,13 +132,17 @@ public class ConversationService {
 
         List<ConversationVO> result = new ArrayList<>(conversations.size());
         for (ImConversation conv : conversations) {
-            String displayTitle = Integer.valueOf(1).equals(conv.getType())
-                    ? directTitleMap.getOrDefault(conv.getId(), "单聊会话")
+            boolean isDirect = Integer.valueOf(1).equals(conv.getType());
+            ImUser peer = isDirect ? directPeerMap.get(conv.getId()) : null;
+            String displayTitle = isDirect
+                    ? (peer != null ? peer.getNickname() : "单聊会话")
                     : conv.getTitle();
+            Long peerUserId = peer != null ? peer.getId() : null;
+            Boolean peerOnline = peerUserId != null ? peerOnlineMap.getOrDefault(peerUserId, false) : null;
             long lastRead = lastReadMap.getOrDefault(conv.getId(), 0L);
             long currentSeq = conv.getCurrentSeq() == null ? 0L : conv.getCurrentSeq();
             long unread = redisUnreadMap.getOrDefault(conv.getId(), Math.max(0L, currentSeq - lastRead));
-            result.add(toVO(conv, displayTitle, lastRead, unread));
+            result.add(toVO(conv, displayTitle, lastRead, unread, peerUserId, peerOnline));
         }
         return result;
     }
@@ -168,7 +173,7 @@ public class ConversationService {
         return dbMembers;
     }
 
-    private Map<Long, String> resolveDirectTitles(List<Long> directConvIds, Long currentUserId) {
+    private Map<Long, ImUser> resolveDirectPeers(List<Long> directConvIds, Long currentUserId) {
         if (directConvIds.isEmpty()) {
             return Collections.emptyMap();
         }
@@ -180,14 +185,34 @@ public class ConversationService {
             return Collections.emptyMap();
         }
         List<Long> peerIds = peerMembers.stream().map(ImConversationMember::getUserId).distinct().toList();
-        Map<Long, String> userNicknameMap = userMapper.selectBatchIds(peerIds).stream()
-                .collect(Collectors.toMap(ImUser::getId, ImUser::getNickname, (a, b) -> a));
+        Map<Long, ImUser> userMap = userMapper.selectBatchIds(peerIds).stream()
+                .collect(Collectors.toMap(ImUser::getId, u -> u, (a, b) -> a));
 
-        return peerMembers.stream().collect(Collectors.toMap(
-                ImConversationMember::getConversationId,
-                m -> userNicknameMap.getOrDefault(m.getUserId(), "用户" + m.getUserId()),
-                (a, b) -> a
-        ));
+        Map<Long, ImUser> result = new java.util.HashMap<>();
+        for (ImConversationMember m : peerMembers) {
+            ImUser u = userMap.get(m.getUserId());
+            if (u != null) {
+                result.putIfAbsent(m.getConversationId(), u);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 批量查询 Redis 在线路由表，单次 MGET 判定对方在线绿点状态
+     */
+    private Map<Long, Boolean> resolveOnlineFlags(List<Long> userIds) {
+        if (userIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<String> keys = userIds.stream().map(RedisKeys::userRoute).toList();
+        List<String> values = redisTemplate.opsForValue().multiGet(keys);
+        Map<Long, Boolean> map = new java.util.HashMap<>(userIds.size());
+        for (int i = 0; i < userIds.size(); i++) {
+            String route = (values != null && i < values.size()) ? values.get(i) : null;
+            map.put(userIds.get(i), route != null && !route.isBlank());
+        }
+        return map;
     }
 
     private void addMember(Long convId, Long userId, int role) {
@@ -201,10 +226,11 @@ public class ConversationService {
     }
 
     private ConversationVO toVO(ImConversation conv, String displayTitle) {
-        return toVO(conv, displayTitle, 0L, 0L);
+        return toVO(conv, displayTitle, 0L, 0L, null, null);
     }
 
-    private ConversationVO toVO(ImConversation conv, String displayTitle, long lastReadSeq, long unreadCount) {
+    private ConversationVO toVO(ImConversation conv, String displayTitle, long lastReadSeq,
+                                long unreadCount, Long peerUserId, Boolean peerOnline) {
         Long lastTime = conv.getLastMsgTime() != null
                 ? conv.getLastMsgTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 : null;
@@ -215,6 +241,8 @@ public class ConversationService {
                 .currentSeq(conv.getCurrentSeq())
                 .lastReadSeq(lastReadSeq)
                 .unreadCount(unreadCount)
+                .peerUserId(peerUserId)
+                .peerOnline(peerOnline)
                 .lastMsgPreview(conv.getLastMsgPreview())
                 .lastMsgTime(lastTime)
                 .build();

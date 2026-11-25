@@ -21,5 +21,6 @@ public class ChatSendPayload {
     private String content;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long replyToMsgId;
+    private String extra;
     private Boolean mentionAgent;
 }
