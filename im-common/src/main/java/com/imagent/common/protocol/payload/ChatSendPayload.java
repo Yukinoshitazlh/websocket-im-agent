@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * 客户端上行发送消息载荷（CHAT_SEND）
  */
@@ -22,5 +24,6 @@ public class ChatSendPayload {
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long replyToMsgId;
     private String extra;
+    private List<String> atUserIds;
     private Boolean mentionAgent;
 }

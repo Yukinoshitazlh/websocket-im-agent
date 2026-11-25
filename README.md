@@ -3,17 +3,17 @@
 基于 **JDK 21 + Spring Boot 3.3 + Netty 4 + MySQL 8.0 + Redis 7 + RabbitMQ 3.13 + WebFlux + Vue 3 / TypeScript / Vite** 构建的分布式即时聊天与 AI Agent 工程化落地项目。
 
 * 架构设计、协议规范与 6～8 周演进路线：[docs/DESIGN.md](docs/DESIGN.md)
-* 简历 STAR 模板与大厂面试 17 问深度复盘：[docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md)
+* 简历 STAR 模板与大厂面试 18 问深度复盘：[docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md)
 
 ---
 
 ## 核心工程特性
 
 * **Netty 长连接网关与多节点精准路由（`im-gateway`）**：HTTP Upgrade 前置 JWT 握手鉴权、`IdleStateHandler` 读空闲心跳剔除、JDK 21 虚拟线程卸载阻塞业务调用、防顶号误删的 Redis 在线路由表、零落库纯内存 `TYPING` 实时输入态信令，以及基于 RabbitMQ Direct Exchange 节点专属队列的跨网关精准推送。
-* **高可靠消息底座与完整聊天体验（`im-server`）**：Redis 幂等缓存 + MySQL 唯一索引双重防重；Lua 原子 `INCR` + 分布式锁冷启动恢复的会话递增 `seq`；`TransactionTemplate` 事务提交后异步投递 MQ；基于 `(conversation_id, seq)` 的断线增量同步与 **`beforeSeq` 游标分页（避免深翻页 OFFSET 扫描）**；支持 2 分钟内消息撤回（`MSG_RECALL` 广播）、引用回复批量关联、实时在线状态与会话历史检索。
-* **深度融合 AI Agent 引擎与延迟调度（`im-agent` + `im-server`）**：通过 RabbitMQ（含死信队列 DLQ）解耦长耗时推理与 IM 主链路；手写有界 `max_steps` ReAct 循环与双模流式客户端；支持 Fanout 控制广播 + `Disposable` 毫秒级中途打断、防 Prompt 注入的会话权限隔离历史检索、**Human-in-the-Loop 审批挂起/唤醒状态机**，以及 **Redis ZSet 延迟队列（Lua 原子弹出 + DB 定时兜底 + 乐观 CAS 防重）** 实现群日程提醒自动到点推送。
+* **高可靠消息底座与飞书/微信级协同能力（`im-server`）**：Redis 幂等缓存 + MySQL 唯一索引双重防重；Lua 原子 `INCR` + 分布式锁冷启动恢复的会话递增 `seq`；`TransactionTemplate` 事务提交后异步投递 MQ；基于 `(conversation_id, seq)` 的断线增量同步与 **`beforeSeq` 游标分页**；支持 **飞书零写放大已读进度圈（`READ_RECEIPT` 水位比对 + 已读/未读明细）**、**表情表态（`MSG_REACTION` 唯一索引幂等 Toggle）**、**`@某人` 联想提醒与 `[有人@我]` 定位**、**会话消息置顶公告条（`MSG_PIN`）**、2 分钟撤回（`MSG_RECALL`）、引用回复、会话置顶/免打扰/草稿、群成员管理闭环（拉人/踢人/改群名/退群 + Cache-Aside 成员缓存失效）以及微信式多选合并转发。
+* **深度融合 AI Agent 引擎与延迟调度（`im-agent` + `im-server`）**：通过 RabbitMQ（含死信队列 DLQ）解耦长耗时推理与 IM 主链路；手写有界 `max_steps` ReAct 循环与双模流式客户端；支持 Fanout 控制广播 + `Disposable` 毫秒级中途打断、防 Prompt 注入的会话权限隔离历史检索、**Human-in-the-Loop 审批挂起/唤醒状态机**、**Redis ZSet 延迟队列（Lua 原子弹出 + DB 定时兜底 + 乐观 CAS 防重）** 自动推送群提醒，以及 **飞书式未读消息一键 AI 省流总结** 与 **勾选消息 AI 提炼纪要**。
 * **富媒体与对象存储秒传（`im-server` + `im-web`）**：浏览器端 WebCrypto 计算文件 SHA-256 哈希，命中 `im_file_object` 唯一索引即零流量秒传；支持 MinIO S3 对象存储（可选 `--profile storage` 启动，端口 `9100`/`9101`）并内置本地磁盘存储自动降级（`AUTO` 模式）。
-* **工程化前端工作台与可观测（`im-web`）**：独立 **Vue 3 + TypeScript + Vite + Pinia** SPA（构建直接产物至 `im-server/src/main/resources/static/`），支持浅色/暗黑主题、Markdown 代码高亮与一键复制、IndexedDB 本地消息秒开缓存、剪贴板粘贴/拖拽发图、灯箱预览、心跳 RTT 监控以及 Node.js 24 原生并发压测工具。
+* **液态玻璃前端工作台与可观测（`im-web`）**：独立 **Vue 3 + TypeScript + Vite + Pinia** SPA（构建直接产物至 `im-server/src/main/resources/static/`），采用流体渐变背景 + 磨砂液态玻璃 + 指针跟随光斑 + Chromium SVG 折射透镜 + 弹簧动效；内置浅色/暗黑主题、Markdown 代码高亮与一键复制、IndexedDB 秒开缓存、剪贴板粘贴/拖拽发图、灯箱预览、心跳 RTT 监控以及 Node.js 24 原生并发压测工具。
 
 ---
 
@@ -27,7 +27,7 @@
 ├── scripts/
 │   └── load-test.mjs           # Node.js 24 原生 WebSocket 并发长连接与吞吐压测脚本
 ├── sql/
-│   └── init.sql                # MySQL 8.0 完整 8 表建表（含 im_file_object）与预置数据
+│   └── init.sql                # MySQL 8.0 完整 10 表建表（含秒传、表态、置顶表）与预置数据
 ├── docker-compose.yml          # Redis 7 + RabbitMQ 3.13 (+ 可选 MinIO / Qdrant)
 ├── pom.xml                     # 父工程（JDK 21 + Lombok + Spring Boot 3.3.5）
 ├── im-common/                  # 公共协议帧、Payload DTO、MQ 事件、RedisKeys、JWT 工具
@@ -86,7 +86,7 @@ mysql --default-character-set=utf8mb4 -u root -p < sql/init.sql
 3. **根治 JDK 21 虚拟线程 Pinning**：将事务提交后的未读递增与 RabbitMQ 发布卸载至专用平台线程池 `pushDispatchExecutor`，规避 `amqp-client` `synchronized` 导致的载体线程固定。
 
 ```powershell
-# 运行全模块单元测试（11 个单测覆盖 JWT、分布式锁 Seq、双重幂等、差异化限流、延迟队列提醒 CAS、防注入权限隔离与实时断流）
+# 运行全模块单元测试（14 个单测覆盖 JWT、分布式锁 Seq、双重幂等、差异化限流、延迟队列提醒 CAS、表情表态与置顶、防注入权限隔离与实时断流）
 mvn test
 
 # 运行真实 WebSocket 并发长连接与跨用户端到端压测（Node.js 24+，零依赖）

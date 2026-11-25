@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -27,6 +29,8 @@ public class MessageVO {
     private String replyToSender;
     private String replyToContent;
     private String extra;
+    private List<String> atUserIds;
+    private List<ReactionGroupVO> reactions;
     private Integer status;
     private Long createdAt;
 }

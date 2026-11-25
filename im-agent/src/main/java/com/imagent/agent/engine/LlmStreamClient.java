@@ -232,6 +232,9 @@ public class LlmStreamClient {
 
         // 情况 B：首次收到用户 Prompt，识别意图决定是否触发 Tool Calling
         String userPrompt = String.valueOf(lastMsg.getOrDefault("content", ""));
+        if (userPrompt.startsWith("[SUMMARY_MODE:")) {
+            return emitSimulatedChunks(taskId, startNs, buildSimulatedDigest(userPrompt), onDelta);
+        }
         if (containsAny(userPrompt, "提醒", "日程", "闹钟", "开会", "通知")) {
             String title = userPrompt.length() > 24 ? userPrompt.substring(0, 24) : userPrompt;
             String remindTime = CreateGroupReminderTool.resolveRelativeOrDefault(userPrompt).format(REMIND_FMT);
@@ -307,6 +310,41 @@ public class LlmStreamClient {
                 .promptTokens(40)
                 .completionTokens(estimateTokens(emitted.toString()))
                 .build();
+    }
+
+    private String buildSimulatedDigest(String prompt) {
+        boolean isUnread = prompt.startsWith("[SUMMARY_MODE:UNREAD]");
+        String heading = isUnread ? "### ✨ 未读消息省流速览" : "### ✨ 选中消息 AI 提炼纪要";
+        String[] lines = prompt.split("\n");
+        List<String> items = new ArrayList<>();
+        java.util.Set<String> participants = new java.util.LinkedHashSet<>();
+        for (String line : lines) {
+            if (line.startsWith("- ")) {
+                items.add(line.substring(2).trim());
+                int idx = line.indexOf(" (#");
+                if (idx > 2) {
+                    participants.add(line.substring(2, idx).trim());
+                }
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        out.append(heading).append("\n\n");
+        out.append("**覆盖消息数**：`").append(items.size()).append("` 条");
+        if (!participants.isEmpty()) {
+            out.append(" | **参与成员**：").append(String.join("、", participants));
+        }
+        out.append("\n\n#### 核心内容摘录\n");
+        int shown = Math.min(items.size(), 6);
+        for (int i = 0; i < shown; i++) {
+            out.append(i + 1).append(". ").append(items.get(i)).append("\n");
+        }
+        if (items.size() > shown) {
+            out.append("- *其余 ").append(items.size() - shown).append(" 条细节已归并省略*\n");
+        }
+        out.append("\n#### 后续建议\n");
+        out.append("- 如需跟进具体结论，可悬停原消息一键「置顶」到群公告栏；\n");
+        out.append("- 如需定时间节点，直接发送 `@AI 15秒后提醒大家...` 即可写入延迟队列自动通知。\n");
+        return out.toString();
     }
 
     private boolean containsAny(String text, String... keywords) {

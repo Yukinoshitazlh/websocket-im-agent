@@ -115,6 +115,12 @@
 * **`beforeSeq` 游标分页与零 N+1 引用回复**：上拉加载更早历史不走 `LIMIT OFFSET`（避免深翻页扫描大量无效行），而是直接携带本地最小 `beforeSeq` 走联合索引 `(conversation_id, seq)` 范围查询；引用回复摘要通过单次 `IN (...)` 批量补全父消息，彻底避免列表页 N+1 查询。
 * **源码**：`im-server/.../service/ReminderSchedulerService.java`、`FileStorageService.java`、`MessageService.java`
 
+**Q18：飞书式群聊已读进度圈（谁已读/谁未读）、表情表态和 `@某人` 强提醒怎么设计才能避免写放大？**
+* **零写放大已读回执（`O(N)` 替代 `O(M×N)`）**：绝对不为每条消息 × 每个群成员写一条已读记录！直接复用 `im_conversation_member.last_read_seq` 水位线并在 Redis Hash `im:conv:readseq:{convId}` 缓存各成员最新水位。客户端打开会话或收到新消息上报 `MSG_ACK` 时，若水位前进则向其他在线成员轻推一条 `READ_RECEIPT(userId, lastReadSeq)`；判断任意消息 `#seq` 谁读了只需内存比对 `member.lastReadSeq >= seq`，彻底消灭写放大。
+* **表情表态（Reaction）并发幂等与零 N+1**：`im_message_reaction` 建联合唯一索引 `uk_msg_user_emoji (msg_id, user_id, emoji)` 保证并发双击不产生脏数据；历史消息列表通过单次 `WHERE msg_id IN (...)` 批量聚合表态，变更通过 `MSG_REACTION` 广播同步。
+* **`[有人@我]` 精准定位与群成员 Cache-Aside 一致性**：发送带 `@` 的消息时，对被 `@` 成员执行 `HSETNX im:unread:at:{userId} {convId} {seq}` 保留最早一条未读 `@` 位置，待 `MSG_ACK` 水位跨过该 `seq` 自动 `HDEL`；群内拉人/踢人/退群更新 DB 后精准删除 `im:conv:members:{convId}` 缓存并同步清理退群成员未读与水位键，防止被踢用户仍收到消息推送。
+* **源码**：`im-server/.../service/UnreadService.java`、`MessageCollabService.java`、`ConversationService.java`
+
 ---
 
 ## 三、2 分钟面试屏幕共享演示剧本

@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 /**
  * 下行实时聊天消息推送载荷（CHAT_PUSH）
  */
@@ -30,6 +32,7 @@ public class ChatPushPayload {
     private String replyToSender;
     private String replyToContent;
     private String extra;
+    private List<String> atUserIds;
     private Integer status;
     private Long createdAt;
 }

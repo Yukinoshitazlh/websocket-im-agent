@@ -15,9 +15,15 @@ public class ConversationVO {
     private Long id;
     private Integer type;
     private String title;
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private Long ownerId;
     private Long currentSeq;
     private Long lastReadSeq;
     private Long unreadCount;
+    private Long mentionSeq;
+    private Boolean pinned;
+    private Boolean muted;
+    private Integer memberCount;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long peerUserId;
     private Boolean peerOnline;

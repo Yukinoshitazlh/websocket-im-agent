@@ -1,7 +1,10 @@
 package com.imagent.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.imagent.common.constant.MqConstants;
 import com.imagent.common.constant.RedisKeys;
 import com.imagent.common.model.BizException;
@@ -12,10 +15,12 @@ import com.imagent.common.protocol.WsPacketType;
 import com.imagent.common.protocol.payload.ChatPushPayload;
 import com.imagent.common.protocol.payload.ChatSendPayload;
 import com.imagent.common.protocol.payload.MsgRecallPayload;
+import com.imagent.common.protocol.payload.ReadReceiptPayload;
 import com.imagent.common.protocol.payload.ServerAckPayload;
 import com.imagent.common.protocol.payload.TypingPayload;
 import com.imagent.server.dto.InternalAgentReplyRequest;
 import com.imagent.server.dto.MessageVO;
+import com.imagent.server.dto.ReactionGroupVO;
 import com.imagent.server.entity.ImGroupReminder;
 import com.imagent.server.entity.ImMessage;
 import com.imagent.server.entity.ImUser;
@@ -63,6 +68,7 @@ public class MessageService {
     private final UnreadService unreadService;
     private final AgentBridgeService agentBridgeService;
     private final RateLimitService rateLimitService;
+    private final MessageCollabService collabService;
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
     private final TransactionTemplate transactionTemplate;
@@ -78,6 +84,7 @@ public class MessageService {
                           UnreadService unreadService,
                           AgentBridgeService agentBridgeService,
                           RateLimitService rateLimitService,
+                          MessageCollabService collabService,
                           StringRedisTemplate redisTemplate,
                           RabbitTemplate rabbitTemplate,
                           TransactionTemplate transactionTemplate,
@@ -92,6 +99,7 @@ public class MessageService {
         this.unreadService = unreadService;
         this.agentBridgeService = agentBridgeService;
         this.rateLimitService = rateLimitService;
+        this.collabService = collabService;
         this.redisTemplate = redisTemplate;
         this.rabbitTemplate = rabbitTemplate;
         this.transactionTemplate = transactionTemplate;
@@ -117,7 +125,7 @@ public class MessageService {
             return Collections.emptyList();
         }
         Collections.reverse(messages);
-        return toMessageVOs(messages);
+        return toMessageVOs(messages, userId);
     }
 
     /**
@@ -141,7 +149,7 @@ public class MessageService {
         if (messages.isEmpty()) {
             return Collections.emptyList();
         }
-        return toMessageVOs(messages);
+        return toMessageVOs(messages, userId);
     }
 
     /**
@@ -162,17 +170,30 @@ public class MessageService {
         if (messages.isEmpty()) {
             return Collections.emptyList();
         }
-        return toMessageVOs(messages);
+        return toMessageVOs(messages, userId);
     }
 
     /**
-     * 处理客户端已读回执（MSG_ACK 或 HTTP 已读上报）
+     * 处理客户端已读回执（MSG_ACK 或 HTTP 已读上报），水位前进时向其他成员实时广播 READ_RECEIPT
      */
     public void ackRead(Long userId, Long conversationId, Long seq) {
-        if (!conversationService.isMember(conversationId, userId)) {
+        List<Long> memberIds = conversationService.listMemberIds(conversationId);
+        if (!memberIds.contains(userId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "无权操作该会话已读状态");
         }
-        unreadService.markAsRead(userId, conversationId, seq);
+        boolean advanced = unreadService.markAsRead(userId, conversationId, seq);
+        if (advanced && seq != null && seq > 0) {
+            List<Long> others = memberIds.stream().filter(id -> !id.equals(userId)).toList();
+            if (!others.isEmpty()) {
+                ReadReceiptPayload receipt = ReadReceiptPayload.builder()
+                        .conversationId(conversationId)
+                        .userId(userId)
+                        .lastReadSeq(seq)
+                        .build();
+                pushDispatchExecutor.execute(() ->
+                        dispatchPushToMembers(others, WsPacket.of(WsPacketType.READ_RECEIPT, receipt)));
+            }
+        }
     }
 
     /**
@@ -238,10 +259,49 @@ public class MessageService {
     }
 
     /**
+     * 发布群系统灰条通知（拉人/踢人/改群名/退群）
+     */
+    public void publishSystemMessage(Long convId, Long operatorId, String content) {
+        String clientMsgId = "sys-" + UUID.randomUUID().toString().substring(0, 12);
+        ImMessage saved = transactionTemplate.execute(status -> {
+            Long seq = seqGeneratorService.nextSeq(convId);
+            ImMessage msg = new ImMessage();
+            msg.setConversationId(convId);
+            msg.setSenderId(operatorId);
+            msg.setClientMsgId(clientMsgId);
+            msg.setSeq(seq);
+            msg.setMsgType("SYSTEM");
+            msg.setContent(content);
+            msg.setStatus(1);
+            messageMapper.insert(msg);
+            conversationMapper.updateLastMessage(convId, seq, msg.getId(), "[系统] " + content);
+            return msg;
+        });
+        if (saved == null) {
+            return;
+        }
+        List<Long> memberIds = conversationService.listMemberIds(convId);
+        ChatPushPayload pushPayload = ChatPushPayload.builder()
+                .msgId(saved.getId())
+                .conversationId(convId)
+                .senderId(operatorId)
+                .senderNickname("系统通知")
+                .clientMsgId(clientMsgId)
+                .seq(saved.getSeq())
+                .msgType("SYSTEM")
+                .content(content)
+                .status(1)
+                .createdAt(System.currentTimeMillis())
+                .build();
+        pushDispatchExecutor.execute(() ->
+                dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.CHAT_PUSH, pushPayload)));
+    }
+
+    /**
      * 可靠消息受理：
      * 1. Redis 幂等缓存拦截弱网重传；
      * 2. TransactionTemplate 事务内分配并发安全 seq 并落库（MySQL 唯一索引 uk_sender_client_msg 兜底并发重传）；
-     * 3. 事务提交后卸载至平台线程池异步递增未读数与投递 RabbitMQ。
+     * 3. 事务提交后卸载至平台线程池异步递增未读数、写入 @ 提醒并投递 RabbitMQ。
      */
     public ServerAckPayload processIncomingMessage(Long senderId, ChatSendPayload payload) {
         Long convId = payload.getConversationId();
@@ -275,7 +335,6 @@ public class MessageService {
             rateLimitService.checkAgentTriggerAllowed(senderId);
         }
 
-        // 若为引用回复，仅校验并提取被引用消息摘要（同会话内有效）
         String replyToSender = null;
         String replyToContent = null;
         if (payload.getReplyToMsgId() != null) {
@@ -288,6 +347,7 @@ public class MessageService {
             }
         }
 
+        String mergedExtra = mergeAtUsersIntoExtra(payload.getExtra(), payload.getAtUserIds());
         String preview = buildPreview(msgType, payload.getContent());
         ImMessage savedMessage;
         try {
@@ -301,7 +361,7 @@ public class MessageService {
                 message.setMsgType(msgType);
                 message.setContent(payload.getContent());
                 message.setReplyToMsgId(payload.getReplyToMsgId());
-                message.setExtra(payload.getExtra());
+                message.setExtra(mergedExtra);
                 message.setStatus(1);
                 messageMapper.insert(message);
 
@@ -353,13 +413,16 @@ public class MessageService {
                 .replyToSender(replyToSender)
                 .replyToContent(replyToContent)
                 .extra(savedMessage.getExtra())
+                .atUserIds(payload.getAtUserIds())
                 .status(1)
                 .createdAt(System.currentTimeMillis())
                 .build();
 
+        List<String> atUserIds = payload.getAtUserIds();
         pushDispatchExecutor.execute(() -> {
             try {
                 unreadService.incrementUnreadForMembers(convId, senderId, memberIds);
+                unreadService.markMentioned(convId, senderId, savedMessage.getSeq(), atUserIds, memberIds);
                 unreadService.clearSenderUnreadFast(senderId, convId);
                 dispatchPushToMembers(memberIds, WsPacket.of(WsPacketType.CHAT_PUSH, pushPayload));
                 if (triggerAgent) {
@@ -475,7 +538,48 @@ public class MessageService {
         if ("FILE".equals(msgType)) {
             return "[文件] " + (content.length() > 40 ? content.substring(0, 40) : content);
         }
+        if ("FORWARD_BUNDLE".equals(msgType)) {
+            return "[聊天记录] " + (content.length() > 36 ? content.substring(0, 36) : content);
+        }
         return content.length() > 60 ? content.substring(0, 60) + "..." : content;
+    }
+
+    private String mergeAtUsersIntoExtra(String extra, List<String> atUserIds) {
+        if (atUserIds == null || atUserIds.isEmpty()) {
+            return extra;
+        }
+        try {
+            ObjectNode root;
+            if (extra != null && !extra.isBlank()) {
+                JsonNode parsed = objectMapper.readTree(extra);
+                root = parsed.isObject() ? (ObjectNode) parsed : objectMapper.createObjectNode();
+            } else {
+                root = objectMapper.createObjectNode();
+            }
+            ArrayNode arr = objectMapper.createArrayNode();
+            atUserIds.forEach(arr::add);
+            root.set("atUserIds", arr);
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            return extra;
+        }
+    }
+
+    private List<String> extractAtUserIds(String extra) {
+        if (extra == null || extra.isBlank()) {
+            return Collections.emptyList();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(extra);
+            JsonNode arr = root.get("atUserIds");
+            if (arr != null && arr.isArray()) {
+                List<String> list = new ArrayList<>(arr.size());
+                arr.forEach(n -> list.add(n.asText()));
+                return list;
+            }
+        } catch (Exception ignored) {
+        }
+        return Collections.emptyList();
     }
 
     private ServerAckPayload readCachedAck(String idempKey) {
@@ -499,10 +603,12 @@ public class MessageService {
         }
     }
 
-    private List<MessageVO> toMessageVOs(List<ImMessage> messages) {
+    private List<MessageVO> toMessageVOs(List<ImMessage> messages, Long currentUserId) {
         Set<Long> userIds = new HashSet<>();
         List<Long> replyIds = new ArrayList<>();
+        List<Long> msgIds = new ArrayList<>(messages.size());
         for (ImMessage m : messages) {
+            msgIds.add(m.getId());
             userIds.add(m.getSenderId());
             if (m.getReplyToMsgId() != null) {
                 replyIds.add(m.getReplyToMsgId());
@@ -519,6 +625,8 @@ public class MessageService {
                 ? Collections.emptyMap()
                 : userMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(ImUser::getId, ImUser::getNickname, (a, b) -> a));
+
+        Map<Long, List<ReactionGroupVO>> reactionMap = collabService.loadReactionsMap(msgIds, currentUserId);
 
         return messages.stream().map(m -> {
             ImMessage replied = m.getReplyToMsgId() != null ? replyMap.get(m.getReplyToMsgId()) : null;
@@ -541,6 +649,8 @@ public class MessageService {
                     .replyToSender(replySender)
                     .replyToContent(replyContent)
                     .extra(m.getExtra())
+                    .atUserIds(extractAtUserIds(m.getExtra()))
+                    .reactions(reactionMap.getOrDefault(m.getId(), Collections.emptyList()))
                     .status(Objects.requireNonNullElse(m.getStatus(), 1))
                     .createdAt(m.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli())
                     .build();

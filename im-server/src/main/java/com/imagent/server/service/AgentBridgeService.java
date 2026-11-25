@@ -8,12 +8,17 @@ import com.imagent.common.model.ErrorCode;
 import com.imagent.common.mq.AgentControlEvent;
 import com.imagent.common.mq.AgentTaskEvent;
 import com.imagent.server.dto.AgentMetricsVO;
+import com.imagent.server.dto.AgentSummarizeRequest;
 import com.imagent.server.entity.ImAgentApproval;
 import com.imagent.server.entity.ImAgentTask;
 import com.imagent.server.entity.ImGroupReminder;
+import com.imagent.server.entity.ImMessage;
+import com.imagent.server.entity.ImUser;
 import com.imagent.server.mapper.ImAgentApprovalMapper;
 import com.imagent.server.mapper.ImAgentTaskMapper;
 import com.imagent.server.mapper.ImGroupReminderMapper;
+import com.imagent.server.mapper.ImMessageMapper;
+import com.imagent.server.mapper.ImUserMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -21,14 +26,19 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * im-server 与 im-agent 之间的桥接层：
  * 1. 识别 @AI 消息并异步投递 AgentTaskEvent（不阻塞 IM 主链路）
- * 2. 受理客户端 AGENT_CANCEL / AGENT_APPROVAL 并通过 Fanout 交换机广播控制信号
- * 3. 提供任务观测与群提醒查询能力
+ * 2. 支持飞书式「未读省流总结」与微信式「多选消息一键 AI 提炼」
+ * 3. 受理客户端 AGENT_CANCEL / AGENT_APPROVAL 并通过 Fanout 交换机广播控制信号
+ * 4. 提供任务观测与群提醒查询能力
  */
 @Slf4j
 @Service
@@ -41,7 +51,10 @@ public class AgentBridgeService {
     private final ImAgentTaskMapper agentTaskMapper;
     private final ImAgentApprovalMapper agentApprovalMapper;
     private final ImGroupReminderMapper groupReminderMapper;
+    private final ImMessageMapper messageMapper;
+    private final ImUserMapper userMapper;
     private final ConversationService conversationService;
+    private final RateLimitService rateLimitService;
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
 
@@ -53,7 +66,7 @@ public class AgentBridgeService {
             return false;
         }
         String lower = content.toLowerCase(Locale.ROOT);
-        return lower.contains("@ai") || content.contains("@AI助手");
+        return lower.contains("@ai") || content.contains("@AI助手") || content.contains("@AI 助手");
     }
 
     /**
@@ -61,6 +74,7 @@ public class AgentBridgeService {
      */
     public Long enqueueAgentTask(Long conversationId, Long triggerUserId, Long triggerMsgId, String rawContent) {
         String cleanPrompt = rawContent
+                .replace("@AI 助手", "")
                 .replace("@AI助手", "")
                 .replace("@AI", "")
                 .replace("@ai", "")
@@ -68,7 +82,86 @@ public class AgentBridgeService {
         if (cleanPrompt.isEmpty()) {
             cleanPrompt = "你好，请自我介绍一下你能帮我做什么。";
         }
+        return submitTask(conversationId, triggerUserId, triggerMsgId, cleanPrompt);
+    }
 
+    /**
+     * 飞书「未读一键省流总结」与微信「多选消息 AI 提炼」统一异步任务入口
+     */
+    public Long enqueueSummaryTask(Long userId, AgentSummarizeRequest req) {
+        Long convId = req.getConversationId();
+        if (!conversationService.isMember(convId, userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员，无权触发 AI 总结");
+        }
+        rateLimitService.checkAgentTriggerAllowed(userId);
+
+        String mode = req.getMode().trim().toUpperCase(Locale.ROOT);
+        List<ImMessage> targetMessages;
+        if ("SELECTED".equals(mode)) {
+            if (req.getMsgIds() == null || req.getMsgIds().isEmpty()) {
+                throw new BizException(ErrorCode.BAD_REQUEST, "请至少勾选一条消息再交给 AI 提炼");
+            }
+            List<Long> safeIds = req.getMsgIds().stream().distinct().limit(40).toList();
+            targetMessages = messageMapper.selectList(
+                    new LambdaQueryWrapper<ImMessage>()
+                            .eq(ImMessage::getConversationId, convId)
+                            .in(ImMessage::getId, safeIds)
+                            .eq(ImMessage::getStatus, 1)
+                            .orderByAsc(ImMessage::getSeq));
+        } else if ("UNREAD".equals(mode)) {
+            long afterSeq = req.getAfterSeq() != null && req.getAfterSeq() >= 0 ? req.getAfterSeq() : 0L;
+            targetMessages = messageMapper.selectList(
+                    new LambdaQueryWrapper<ImMessage>()
+                            .eq(ImMessage::getConversationId, convId)
+                            .gt(ImMessage::getSeq, afterSeq)
+                            .eq(ImMessage::getStatus, 1)
+                            .ne(ImMessage::getMsgType, "SYSTEM")
+                            .orderByAsc(ImMessage::getSeq)
+                            .last("LIMIT 40"));
+        } else {
+            throw new BizException(ErrorCode.BAD_REQUEST, "不支持的总结模式: " + mode);
+        }
+
+        if (targetMessages.isEmpty()) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "范围内暂无可供总结的有效消息");
+        }
+
+        Set<Long> senderIds = targetMessages.stream().map(ImMessage::getSenderId).collect(Collectors.toSet());
+        Map<Long, String> nickMap = senderIds.isEmpty()
+                ? Collections.emptyMap()
+                : userMapper.selectBatchIds(senderIds).stream()
+                .collect(Collectors.toMap(ImUser::getId, ImUser::getNickname, (a, b) -> a));
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[SUMMARY_MODE:").append(mode).append("]\n");
+        sb.append("请用简洁清晰的中文 Markdown 总结以下 ")
+                .append(targetMessages.size())
+                .append(" 条聊天记录，提炼【核心议题】【关键结论】与【待办事项】：\n");
+        for (ImMessage m : targetMessages) {
+            String nick = nickMap.getOrDefault(m.getSenderId(), "用户" + m.getSenderId());
+            String content = formatMsgForSummary(m);
+            sb.append("- ").append(nick).append(" (#").append(m.getSeq()).append("): ").append(content).append("\n");
+        }
+
+        Long triggerMsgId = targetMessages.get(targetMessages.size() - 1).getId();
+        return submitTask(convId, userId, triggerMsgId, sb.toString());
+    }
+
+    private String formatMsgForSummary(ImMessage m) {
+        if ("IMAGE".equals(m.getMsgType())) {
+            return "[分享了一张图片]";
+        }
+        if ("FILE".equals(m.getMsgType())) {
+            return "[分享了文件: " + m.getContent() + "]";
+        }
+        if ("FORWARD_BUNDLE".equals(m.getMsgType())) {
+            return "[合并转发聊天记录: " + m.getContent() + "]";
+        }
+        String text = m.getContent() == null ? "" : m.getContent().replace('\n', ' ');
+        return text.length() > 160 ? text.substring(0, 160) + "..." : text;
+    }
+
+    private Long submitTask(Long conversationId, Long triggerUserId, Long triggerMsgId, String prompt) {
         ImAgentTask task = new ImAgentTask();
         task.setConversationId(conversationId);
         task.setTriggerUserId(triggerUserId);
@@ -84,7 +177,7 @@ public class AgentBridgeService {
                 .conversationId(conversationId)
                 .triggerUserId(triggerUserId)
                 .triggerMsgId(triggerMsgId)
-                .userPrompt(cleanPrompt)
+                .userPrompt(prompt)
                 .build();
 
         rabbitTemplate.convertAndSend(MqConstants.AGENT_EXCHANGE, MqConstants.AGENT_TASK_ROUTING_KEY, event);

@@ -1,4 +1,4 @@
-import type { FileMeta } from '../types/im';
+import type { FileMeta, ForwardBundleMeta } from '../types/im';
 
 const AVATAR_PALETTE = [
   '#2457F5',
@@ -62,6 +62,19 @@ export function parseFileMeta(extra?: string | null): FileMeta | null {
     const parsed = JSON.parse(extra);
     if (parsed && typeof parsed.url === 'string') {
       return parsed as FileMeta;
+    }
+  } catch {
+    // ignore invalid json
+  }
+  return null;
+}
+
+export function parseForwardBundle(extra?: string | null): ForwardBundleMeta | null {
+  if (!extra) return null;
+  try {
+    const parsed = JSON.parse(extra);
+    if (parsed && Array.isArray(parsed.items)) {
+      return parsed as ForwardBundleMeta;
     }
   } catch {
     // ignore invalid json

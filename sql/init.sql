@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS im_conversation_member (
     role            TINYINT     NOT NULL DEFAULT 1 COMMENT '1=普通成员, 2=管理员, 3=群主, 4=AI Agent',
     last_read_seq   BIGINT      NOT NULL DEFAULT 0 COMMENT '该成员已读最大 seq',
     muted           TINYINT     NOT NULL DEFAULT 0 COMMENT '是否免打扰: 0=否, 1=是',
+    pinned          TINYINT     NOT NULL DEFAULT 0 COMMENT '是否置顶会话: 0=否, 1=是',
     joined_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
     UNIQUE KEY uk_conv_user (conversation_id, user_id),
@@ -166,6 +167,35 @@ CREATE TABLE IF NOT EXISTS im_file_object (
     UNIQUE KEY uk_sha256 (sha256),
     KEY idx_uploader (uploader_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文件对象与秒传元数据表';
+
+-- ----------------------------------------------------------------------------
+-- 9. 消息表情表态表（飞书/Slack 式 Reaction，联合唯一索引保证并发幂等 toggle）
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS im_message_reaction (
+    id              BIGINT      NOT NULL COMMENT '主键ID',
+    msg_id          BIGINT      NOT NULL COMMENT '消息ID',
+    conversation_id BIGINT      NOT NULL COMMENT '会话ID',
+    user_id         BIGINT      NOT NULL COMMENT '表态用户ID',
+    emoji           VARCHAR(16) NOT NULL COMMENT '表情符号',
+    created_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_msg_user_emoji (msg_id, user_id, emoji),
+    KEY idx_conv_msg (conversation_id, msg_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='消息表情表态表';
+
+-- ----------------------------------------------------------------------------
+-- 10. 会话置顶消息表（群公告/重要消息置顶条）
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS im_conversation_pin (
+    id              BIGINT      NOT NULL COMMENT '主键ID',
+    conversation_id BIGINT      NOT NULL COMMENT '会话ID',
+    msg_id          BIGINT      NOT NULL COMMENT '被置顶的消息ID',
+    pinned_by       BIGINT      NOT NULL COMMENT '操作人ID',
+    pinned_at       DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_conv_msg (conversation_id, msg_id),
+    KEY idx_conv_time (conversation_id, pinned_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='会话置顶消息表';
 
 -- ----------------------------------------------------------------------------
 -- 预置数据：内置 AI Agent 虚拟账号（固定 ID = 10000）

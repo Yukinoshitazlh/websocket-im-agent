@@ -21,13 +21,45 @@ export interface Conversation {
   id: string;
   type: number; // 1=单聊, 2=群聊
   title: string;
+  ownerId?: string | null;
   currentSeq: number;
   lastReadSeq: number;
   unreadCount: number;
+  mentionSeq?: number | null;
+  pinned?: boolean;
+  muted?: boolean;
+  memberCount?: number;
   peerUserId?: string | null;
   peerOnline?: boolean | null;
   lastMsgPreview: string;
   lastMsgTime?: number | null;
+}
+
+export interface ConversationMember {
+  userId: string;
+  username: string;
+  nickname: string;
+  role: number; // 1=普通成员, 2=管理员, 3=群主
+  online: boolean;
+  lastReadSeq: number;
+}
+
+export interface ReactionGroup {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
+  users: string[];
+}
+
+export interface PinnedMessage {
+  msgId: string;
+  conversationId: string;
+  seq: number;
+  senderNickname: string;
+  msgType: string;
+  preview: string;
+  pinnedByNickname: string;
+  pinnedAt: number;
 }
 
 export interface FileMeta {
@@ -39,6 +71,18 @@ export interface FileMeta {
   instantHit?: boolean;
 }
 
+export interface ForwardBundleItem {
+  senderNickname: string;
+  msgType: string;
+  content: string;
+  createdAt: number;
+}
+
+export interface ForwardBundleMeta {
+  title: string;
+  items: ForwardBundleItem[];
+}
+
 export interface ChatMessage {
   id?: string;
   conversationId: string;
@@ -46,12 +90,22 @@ export interface ChatMessage {
   senderNickname: string;
   clientMsgId?: string;
   seq: number;
-  msgType: 'TEXT' | 'IMAGE' | 'FILE' | 'AGENT_TEXT' | 'REMINDER' | 'SYSTEM' | string;
+  msgType:
+    | 'TEXT'
+    | 'IMAGE'
+    | 'FILE'
+    | 'FORWARD_BUNDLE'
+    | 'AGENT_TEXT'
+    | 'REMINDER'
+    | 'SYSTEM'
+    | string;
   content: string;
   replyToMsgId?: string | null;
   replyToSender?: string | null;
   replyToContent?: string | null;
   extra?: string | null;
+  atUserIds?: string[];
+  reactions?: ReactionGroup[];
   status: number; // 1=正常, 2=已撤回
   createdAt: number;
   localStatus?: 'sending' | 'sent' | 'aborted';
@@ -132,6 +186,10 @@ export type WsPacketType =
   | 'MSG_ACK'
   | 'MSG_RECALL'
   | 'TYPING'
+  | 'READ_RECEIPT'
+  | 'MSG_REACTION'
+  | 'MSG_PIN'
+  | 'CONV_UPDATE'
   | 'AGENT_STREAM'
   | 'AGENT_CANCEL'
   | 'AGENT_APPROVAL_CARD'

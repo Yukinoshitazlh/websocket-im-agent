@@ -17,5 +17,6 @@ public class ImConversationMember {
     private Integer role;
     private Long lastReadSeq;
     private Integer muted;
+    private Integer pinned;
     private LocalDateTime joinedAt;
 }

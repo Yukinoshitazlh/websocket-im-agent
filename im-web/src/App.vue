@@ -1,6 +1,19 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ArrowDown, Loader2, PanelRight, Paperclip, Send, Upload, X } from 'lucide-vue-next';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import {
+  ArrowDown,
+  AtSign,
+  Forward,
+  Loader2,
+  PanelRight,
+  Paperclip,
+  Pin,
+  Send,
+  Sparkles,
+  Upload,
+  Users,
+  X
+} from 'lucide-vue-next';
 import { useChatStore } from './stores/chat';
 import AuthView from './components/AuthView.vue';
 import SidebarRail from './components/SidebarRail.vue';
@@ -9,14 +22,37 @@ import AgentStreamCard from './components/AgentStreamCard.vue';
 import ApprovalCard from './components/ApprovalCard.vue';
 import InspectorDrawer from './components/InspectorDrawer.vue';
 import GroupModal from './components/GroupModal.vue';
+import ReadDetailModal from './components/ReadDetailModal.vue';
+import ForwardModal from './components/ForwardModal.vue';
+import BundleViewerModal from './components/BundleViewerModal.vue';
 import type { ChatMessage } from './types/im';
-import { formatDateDivider } from './utils/format';
+import { avatarColor, avatarInitial, formatDateDivider } from './utils/format';
+
+interface MentionOption {
+  id: string;
+  label: string;
+  insertText: string;
+  sub: string;
+  isAi?: boolean;
+  isAll?: boolean;
+  online?: boolean;
+}
 
 const store = useChatStore();
 
 const showInspector = ref(true);
+const inspectorTabReq = ref<'metrics' | 'group' | 'search' | undefined>(undefined);
 const showGroupModal = ref(false);
+const showForwardModal = ref(false);
+const showAllPins = ref(false);
+
 const draft = ref('');
+const pendingAtIds = ref<string[]>([]);
+const mentionOpen = ref(false);
+const mentionFilter = ref('');
+const mentionActiveIdx = ref(0);
+const mentionAnchorPos = ref(0);
+
 const dragActive = ref(false);
 const atBottom = ref(true);
 const nowMs = ref(Date.now());
@@ -41,9 +77,64 @@ onUnmounted(() => {
 });
 
 function onGlobalKeyDown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && store.lightboxUrl) {
-    store.lightboxUrl = null;
+  if (e.key === 'Escape') {
+    if (store.lightboxUrl) store.lightboxUrl = null;
+    else if (store.viewingBundle) store.viewingBundle = null;
+    else if (store.readDetailMsg) store.readDetailMsg = null;
+    else if (showForwardModal.value) showForwardModal.value = false;
+    else if (mentionOpen.value) mentionOpen.value = false;
+    else if (store.multiSelectMode) store.exitMultiSelect();
   }
+}
+
+const latestPin = computed(() => store.activePins[0] || null);
+
+// 构建 @ 联想候选列表（@AI 助手 + @所有人 + 会话成员）
+const mentionOptions = computed<MentionOption[]>(() => {
+  const list: MentionOption[] = [
+    {
+      id: 'AI',
+      label: 'AI 助手',
+      insertText: '@AI ',
+      sub: '智能总结 / 延迟提醒 / 问答',
+      isAi: true,
+      online: true
+    }
+  ];
+  if (store.activeConversation?.type === 2) {
+    list.push({
+      id: 'ALL',
+      label: '所有人',
+      insertText: '@所有人 ',
+      sub: `提醒全群 ${store.activeMembers.length} 位成员`,
+      isAll: true,
+      online: true
+    });
+  }
+  for (const m of store.activeMembers) {
+    if (String(m.userId) === String(store.currentUser?.id)) continue;
+    list.push({
+      id: String(m.userId),
+      label: m.nickname,
+      insertText: `@${m.nickname} `,
+      sub: `@${m.username}`,
+      online: m.online
+    });
+  }
+  const kw = mentionFilter.value.trim().toLowerCase();
+  if (!kw) return list;
+  return list.filter(
+    (item) =>
+      item.label.toLowerCase().includes(kw) || item.sub.toLowerCase().includes(kw)
+  );
+});
+
+function openGroupManageTab() {
+  showInspector.value = true;
+  inspectorTabReq.value = 'group';
+  nextTick(() => {
+    inspectorTabReq.value = undefined;
+  });
 }
 
 function shouldShowDivider(index: number): boolean {
@@ -59,6 +150,7 @@ function isGroupedMessage(index: number): boolean {
   const curr = store.messages[index];
   if (prev.status === 2 || curr.status === 2) return false;
   if (prev.msgType === 'REMINDER' || curr.msgType === 'REMINDER') return false;
+  if (prev.msgType === 'SYSTEM' || curr.msgType === 'SYSTEM') return false;
   if (prev.senderId !== curr.senderId) return false;
   return curr.createdAt - prev.createdAt < 2 * 60 * 1000;
 }
@@ -71,6 +163,29 @@ function scrollToBottom(smooth = false) {
     atBottom.value = true;
     store.unreadBelowCount = 0;
   });
+}
+
+async function jumpToSeq(seq: number) {
+  if (!seq || seq <= 0) return;
+  showAllPins.value = false;
+  // 若目标 seq 尚未拉取到内存，最多向前翻 3 页补齐
+  for (let i = 0; i < 3; i++) {
+    const exists = store.messages.some((m) => m.seq === seq);
+    if (exists || !store.hasMoreHistory) break;
+    await store.loadOlderMessages();
+  }
+  await nextTick();
+  const container = msgListRef.value;
+  const targetEl = container?.querySelector(`[data-msg-seq="${seq}"]`) as HTMLElement | null;
+  if (targetEl) {
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    store.flashHighlightSeq(seq);
+    if (store.mentionJumpSeq === seq) {
+      store.mentionJumpSeq = null;
+    }
+  } else {
+    store.pushToast(`未在近期记录中找到 #${seq}，请继续上拉加载更早历史`);
+  }
 }
 
 async function handleScroll() {
@@ -96,9 +211,18 @@ async function triggerLoadOlder() {
   }
 }
 
+// 切换会话时自动保存旧草稿、恢复新草稿并滚动到底部
 watch(
   () => store.activeConvId,
-  () => {
+  (nextId, prevId) => {
+    if (prevId) {
+      store.setDraft(prevId, draft.value);
+    }
+    draft.value = nextId ? store.getDraft(nextId) : '';
+    pendingAtIds.value = [];
+    mentionOpen.value = false;
+    showAllPins.value = false;
+    nextTick(adjustTextarea);
     scrollToBottom(false);
   }
 );
@@ -131,8 +255,53 @@ function adjustTextarea() {
   el.style.height = Math.min(el.scrollHeight, 136) + 'px';
 }
 
+function updateMentionTrigger() {
+  const el = textareaRef.value;
+  if (!el) return;
+  const cursor = el.selectionStart || 0;
+  const before = draft.value.slice(0, cursor);
+  const atIdx = before.lastIndexOf('@');
+  if (atIdx >= 0) {
+    const prevChar = atIdx === 0 ? ' ' : before[atIdx - 1];
+    const query = before.slice(atIdx + 1);
+    if ((prevChar === ' ' || prevChar === '\n') && !query.includes(' ') && query.length <= 20) {
+      mentionAnchorPos.value = atIdx;
+      mentionFilter.value = query;
+      mentionActiveIdx.value = 0;
+      mentionOpen.value = true;
+      return;
+    }
+  }
+  mentionOpen.value = false;
+}
+
+function selectMentionOption(opt: MentionOption) {
+  const el = textareaRef.value;
+  const cursor = el ? el.selectionStart : draft.value.length;
+  const before = draft.value.slice(0, mentionAnchorPos.value);
+  const after = draft.value.slice(cursor);
+  draft.value = before + opt.insertText + after;
+  if (!opt.isAi && !pendingAtIds.value.includes(opt.id)) {
+    pendingAtIds.value.push(opt.id);
+  }
+  mentionOpen.value = false;
+  if (store.activeConvId) {
+    store.setDraft(store.activeConvId, draft.value);
+  }
+  nextTick(() => {
+    adjustTextarea();
+    const pos = before.length + opt.insertText.length;
+    el?.focus();
+    el?.setSelectionRange(pos, pos);
+  });
+}
+
 function handleComposerInput() {
   adjustTextarea();
+  updateMentionTrigger();
+  if (store.activeConvId) {
+    store.setDraft(store.activeConvId, draft.value);
+  }
   if (draft.value.trim()) {
     store.sendTypingSignal();
   }
@@ -141,15 +310,44 @@ function handleComposerInput() {
 function handleSend(duplicateTest = false) {
   const text = draft.value.trim();
   if (!text) return;
-  const ok = store.sendChatMessage(text, { duplicateTest });
+  const atIds = [...pendingAtIds.value];
+  if (text.includes('@所有人') && !atIds.includes('ALL')) {
+    atIds.push('ALL');
+  }
+  const ok = store.sendChatMessage(text, { atUserIds: atIds, duplicateTest });
   if (ok) {
     draft.value = '';
+    pendingAtIds.value = [];
+    mentionOpen.value = false;
     nextTick(adjustTextarea);
     scrollToBottom(true);
   }
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  if (mentionOpen.value && mentionOptions.value.length > 0) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      mentionActiveIdx.value = (mentionActiveIdx.value + 1) % mentionOptions.value.length;
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      mentionActiveIdx.value =
+        (mentionActiveIdx.value - 1 + mentionOptions.value.length) % mentionOptions.value.length;
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      selectMentionOption(mentionOptions.value[mentionActiveIdx.value]);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      mentionOpen.value = false;
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     handleSend(false);
@@ -228,6 +426,14 @@ function setReplyTarget(msg: ChatMessage) {
   store.replyTarget = msg;
   textareaRef.value?.focus();
 }
+
+function handleAiSummarizeSelected() {
+  if (store.selectedMsgIds.length === 0) {
+    store.pushToast('请先勾选至少一条消息', 'error');
+    return;
+  }
+  store.triggerAiSummary('SELECTED', { msgIds: store.selectedMsgIds });
+}
 </script>
 
 <template>
@@ -292,7 +498,16 @@ function setReplyTarget(msg: ChatMessage) {
                 <span class="dot" />
                 <span>{{ store.activeConversation.peerOnline ? '在线' : '离线' }}</span>
               </span>
-              <span v-else class="type-pill">群聊</span>
+              <button
+                v-else
+                type="button"
+                class="type-pill clickable"
+                title="点击打开群成员管理"
+                @click="openGroupManageTab"
+              >
+                <Users :size="12" />
+                <span>群聊 ({{ store.activeMembers.length || store.activeConversation.memberCount || 2 }})</span>
+              </button>
               <Transition name="slide-up">
                 <span v-if="store.typingHint" class="typing-pill">
                   <span class="typing-dots"><i /><i /><i /></span>
@@ -321,17 +536,98 @@ function setReplyTarget(msg: ChatMessage) {
           </div>
         </header>
 
+        <!-- 飞书式群置顶公告栏 -->
+        <Transition name="slide-up">
+          <div v-if="store.activeConversation && latestPin" class="pin-banner">
+            <button type="button" class="pin-main" @click="jumpToSeq(latestPin.seq)">
+              <Pin :size="13" class="pin-ic" />
+              <span class="pin-label">置顶</span>
+              <strong class="pin-sender">{{ latestPin.senderNickname }}:</strong>
+              <span class="pin-text">{{ latestPin.preview }}</span>
+            </button>
+
+            <div class="pin-actions">
+              <button
+                v-if="store.activePins.length > 1"
+                type="button"
+                class="pin-more-btn"
+                @click="showAllPins = !showAllPins"
+              >
+                全部 {{ store.activePins.length }} 条
+              </button>
+              <button
+                type="button"
+                class="pin-close-btn"
+                title="取消置顶"
+                @click="store.unpinMessage(latestPin.msgId)"
+              >
+                <X :size="13" />
+              </button>
+            </div>
+
+            <Transition name="pop">
+              <div v-if="showAllPins" class="pin-popover glass-strong">
+                <div v-for="p in store.activePins" :key="p.msgId" class="pin-pop-row">
+                  <button type="button" class="pin-pop-jump" @click="jumpToSeq(p.seq)">
+                    <strong>{{ p.senderNickname }}</strong>
+                    <span>{{ p.preview }}</span>
+                  </button>
+                  <button type="button" class="pin-close-btn" title="取消置顶" @click="store.unpinMessage(p.msgId)">
+                    <X :size="12" />
+                  </button>
+                </div>
+              </div>
+            </Transition>
+          </div>
+        </Transition>
+
         <!-- 空状态 -->
         <div v-if="!store.activeConversation" class="empty-stage">
           <div class="empty-card glass">
             <div class="empty-orb" />
             <h3>欢迎回到 PulseIM 工作台</h3>
-            <p>点击左侧会话开始实时沟通，或搜索用户发起私聊、创建群聊并输入 <code>@AI</code> 召唤智能体。</p>
+            <p>点击左侧会话开始实时沟通，右键会话可置顶/免打扰，输入 <code>@</code> 可联想提醒群友或召唤 AI。</p>
           </div>
         </div>
 
         <!-- 消息滚动区 -->
         <template v-else>
+          <!-- 顶部悬浮智能胶囊（未读 AI 一键省流总结 + [有人@我] 定位） -->
+          <div class="stage-banners">
+            <Transition name="pop">
+              <div
+                v-if="store.unreadDigestBanner && store.unreadDigestBanner.conversationId === store.activeConvId"
+                class="digest-capsule liquid-lens"
+              >
+                <Sparkles :size="15" class="digest-ic" />
+                <span>有 <strong>{{ store.unreadDigestBanner.count }}</strong> 条未读消息，让 AI 3 秒帮你省流总结</span>
+                <button
+                  type="button"
+                  class="btn btn-primary btn-xs"
+                  :disabled="store.summarizing"
+                  @click="store.triggerAiSummary('UNREAD', { afterSeq: store.unreadDigestBanner.afterSeq })"
+                >
+                  {{ store.summarizing ? '正在提炼...' : '一键省流' }}
+                </button>
+                <button type="button" class="capsule-close" @click="store.unreadDigestBanner = null">
+                  <X :size="13" />
+                </button>
+              </div>
+            </Transition>
+
+            <Transition name="pop">
+              <button
+                v-if="store.mentionJumpSeq"
+                type="button"
+                class="mention-capsule liquid-lens"
+                @click="jumpToSeq(store.mentionJumpSeq)"
+              >
+                <AtSign :size="14" />
+                <span>有人 @ 了你，点击定位原消息</span>
+              </button>
+            </Transition>
+          </div>
+
           <div ref="msgListRef" class="msg-scroll" @scroll="handleScroll">
             <div class="history-top">
               <button
@@ -357,8 +653,18 @@ function setReplyTarget(msg: ChatMessage) {
                 :is-mine="msg.senderId === store.currentUser.id"
                 :grouped="!shouldShowDivider(idx) && isGroupedMessage(idx)"
                 :now-ms="nowMs"
+                :members="store.activeMembers"
+                :multi-select="store.multiSelectMode"
+                :selected="Boolean(msg.id && store.selectedMsgIds.includes(msg.id))"
+                :highlighted="Boolean(msg.seq > 0 && store.highlightedSeq === msg.seq)"
                 @reply="setReplyTarget"
                 @recall="store.recallMessage"
+                @react="store.toggleReaction"
+                @pin="store.pinMessage"
+                @toggle-select="store.toggleSelectMsg"
+                @enter-multi-select="store.enterMultiSelect"
+                @open-read-detail="store.readDetailMsg = $event"
+                @open-bundle="store.viewingBundle = $event"
                 @preview-image="store.lightboxUrl = $event"
                 @copied="store.pushToast($event)"
               />
@@ -392,8 +698,66 @@ function setReplyTarget(msg: ChatMessage) {
             </button>
           </Transition>
 
-          <!-- 输入区 -->
-          <footer class="composer-area">
+          <!-- 多选操作条（合并转发 / 交由 AI 提炼） -->
+          <footer v-if="store.multiSelectMode" class="multiselect-bar">
+            <span class="ms-count">已勾选 <strong>{{ store.selectedMsgIds.length }}</strong> 条消息</span>
+            <div class="ms-actions">
+              <button
+                type="button"
+                class="btn btn-ghost"
+                :disabled="store.selectedMsgIds.length === 0"
+                @click="showForwardModal = true"
+              >
+                <Forward :size="15" />
+                <span>合并转发</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="store.selectedMsgIds.length === 0 || store.summarizing"
+                @click="handleAiSummarizeSelected"
+              >
+                <Sparkles :size="15" />
+                <span>{{ store.summarizing ? 'AI 提炼中...' : '交给 AI 提炼纪要' }}</span>
+              </button>
+              <button type="button" class="btn btn-ghost" @click="store.exitMultiSelect">
+                取消
+              </button>
+            </div>
+          </footer>
+
+          <!-- 普通输入区 -->
+          <footer v-else class="composer-area">
+            <!-- @某人 液态玻璃联想弹窗 -->
+            <Transition name="pop">
+              <div v-if="mentionOpen && mentionOptions.length > 0" class="mention-popover glass-strong">
+                <div class="mention-head">选择要提醒的成员（↑↓ 选择，Enter 确认）</div>
+                <button
+                  v-for="(opt, idx) in mentionOptions"
+                  :key="opt.id"
+                  type="button"
+                  class="mention-item"
+                  :class="{ active: idx === mentionActiveIdx }"
+                  @mousedown.prevent="selectMentionOption(opt)"
+                >
+                  <div
+                    class="avatar avatar-sm"
+                    :class="{ 'avatar-ai': opt.isAi }"
+                    :style="opt.isAi ? undefined : { background: opt.isAll ? '#C2410C' : avatarColor(opt.label) }"
+                  >
+                    <Sparkles v-if="opt.isAi" :size="13" />
+                    <Users v-else-if="opt.isAll" :size="13" />
+                    <span v-else>{{ avatarInitial(opt.label) }}</span>
+                    <span v-if="opt.online && !opt.isAi && !opt.isAll" class="online-dot" />
+                  </div>
+                  <div class="mention-meta">
+                    <strong>{{ opt.label }}</strong>
+                    <small>{{ opt.sub }}</small>
+                  </div>
+                </button>
+              </div>
+            </Transition>
+
             <Transition name="slide-up">
               <div v-if="store.replyTarget" class="reply-bar">
                 <div class="reply-preview">
@@ -445,7 +809,7 @@ function setReplyTarget(msg: ChatMessage) {
                 v-model="draft"
                 rows="1"
                 class="composer-input"
-                placeholder="输入消息（Enter 发送，Shift+Enter 换行，支持 Ctrl+V 粘贴图片，@AI 召唤智能体）"
+                placeholder="输入消息（敲 @ 提醒群友或召唤 AI，Enter 发送，Shift+Enter 换行，支持 Ctrl+V 粘贴截图）"
                 @input="handleComposerInput"
                 @keydown="handleKeydown"
                 @paste="handlePaste"
@@ -467,7 +831,11 @@ function setReplyTarget(msg: ChatMessage) {
       </main>
 
       <Transition name="drawer">
-        <InspectorDrawer v-if="showInspector" />
+        <InspectorDrawer
+          v-if="showInspector"
+          :requested-tab="inspectorTabReq"
+          @jump-to-seq="jumpToSeq"
+        />
       </Transition>
     </div>
   </Transition>
@@ -475,6 +843,30 @@ function setReplyTarget(msg: ChatMessage) {
   <!-- 建群弹窗 -->
   <Transition name="modal">
     <GroupModal v-if="showGroupModal" @close="showGroupModal = false" />
+  </Transition>
+
+  <!-- 飞书已读明细弹窗 -->
+  <Transition name="modal">
+    <ReadDetailModal
+      v-if="store.readDetailMsg"
+      :message="store.readDetailMsg"
+      :members="store.activeMembers"
+      @close="store.readDetailMsg = null"
+    />
+  </Transition>
+
+  <!-- 合并转发选择会话弹窗 -->
+  <Transition name="modal">
+    <ForwardModal v-if="showForwardModal" @close="showForwardModal = false" />
+  </Transition>
+
+  <!-- 合并转发聊天记录详情弹窗 -->
+  <Transition name="modal">
+    <BundleViewerModal
+      v-if="store.viewingBundle"
+      :bundle="store.viewingBundle"
+      @close="store.viewingBundle = null"
+    />
   </Transition>
 
   <!-- 图片灯箱 -->
@@ -556,7 +948,7 @@ function setReplyTarget(msg: ChatMessage) {
 
 .chat-header {
   position: relative;
-  z-index: 5;
+  z-index: 6;
   height: 62px;
   padding: 0 20px;
   border-bottom: 1px solid var(--border);
@@ -628,13 +1020,28 @@ function setReplyTarget(msg: ChatMessage) {
 }
 
 .type-pill {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
   font-weight: 650;
-  padding: 3px 9px;
+  padding: 3px 10px;
   border-radius: 999px;
   background: var(--ai-soft);
   border: 1px solid var(--ai-border);
   color: var(--ai);
+}
+
+.type-pill.clickable {
+  cursor: pointer;
+  transition: transform 0.3s var(--ease-spring), background 0.2s;
+}
+
+.type-pill.clickable:hover {
+  transform: translateY(-1px);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .typing-pill {
@@ -681,6 +1088,192 @@ function setReplyTarget(msg: ChatMessage) {
   padding: 4px 11px;
   border-radius: 999px;
   box-shadow: var(--shadow-sm);
+}
+
+/* 群置顶公告条 */
+.pin-banner {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 16px;
+  background: rgba(47, 91, 255, 0.08);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.pin-main {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pin-ic {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.pin-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 6px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+
+.pin-sender {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.pin-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-secondary);
+}
+
+.pin-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pin-more-btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.pin-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.pin-close-btn:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.pin-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 16px;
+  width: min(420px, calc(100% - 32px));
+  border-radius: 14px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 25;
+}
+
+.pin-pop-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 9px;
+}
+
+.pin-pop-row:hover {
+  background: var(--hover);
+}
+
+.pin-pop-jump {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pin-pop-jump span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--ink-secondary);
+}
+
+/* 顶部悬浮胶囊区（未读 AI 总结 + @定位） */
+.stage-banners {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+}
+
+.digest-capsule {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-edge);
+  background: rgba(18, 180, 140, 0.14);
+  color: var(--ink);
+  font-size: 12.5px;
+  box-shadow: 0 8px 24px rgba(18, 180, 140, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.digest-ic {
+  color: var(--ai);
+}
+
+.capsule-close {
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.mention-capsule {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(224, 49, 59, 0.35);
+  background: rgba(224, 49, 59, 0.12);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(224, 49, 59, 0.16);
 }
 
 .empty-stage {
@@ -786,6 +1379,29 @@ function setReplyTarget(msg: ChatMessage) {
   transform: translateY(-2px) scale(1.04);
 }
 
+/* 多选底部操作栏 */
+.multiselect-bar {
+  position: relative;
+  z-index: 5;
+  border-top: 1px solid var(--border);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+}
+
+.ms-count {
+  font-size: 13.5px;
+  color: var(--ink-secondary);
+}
+
+.ms-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .composer-area {
   position: relative;
   z-index: 5;
@@ -794,6 +1410,61 @@ function setReplyTarget(msg: ChatMessage) {
   display: flex;
   flex-direction: column;
   gap: 9px;
+}
+
+/* @联想弹窗 */
+.mention-popover {
+  position: absolute;
+  left: 18px;
+  bottom: calc(100% + 8px);
+  width: 280px;
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: 16px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  backdrop-filter: blur(26px) saturate(190%);
+  padding: 6px;
+  z-index: 35;
+}
+
+.mention-head {
+  font-size: 11px;
+  color: var(--ink-muted);
+  padding: 4px 8px 6px;
+}
+
+.mention-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.mention-item.active,
+.mention-item:hover {
+  background: var(--accent-soft);
+}
+
+.mention-meta {
+  display: flex;
+  flex-direction: column;
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.mention-meta small {
+  font-size: 11px;
+  color: var(--ink-muted);
 }
 
 .reply-bar {

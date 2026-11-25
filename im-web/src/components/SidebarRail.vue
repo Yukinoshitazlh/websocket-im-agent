@@ -1,8 +1,22 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { LogOut, Moon, Plus, Search, Sun, Users, Wifi, WifiOff } from 'lucide-vue-next';
+import { onMounted, onUnmounted, ref } from 'vue';
+import {
+  Bell,
+  BellOff,
+  CheckCheck,
+  LogOut,
+  Moon,
+  Pin,
+  PinOff,
+  Plus,
+  Search,
+  Sun,
+  Users,
+  Wifi,
+  WifiOff
+} from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
-import type { UserProfile } from '../types/im';
+import type { Conversation, UserProfile } from '../types/im';
 import { avatarColor, avatarInitial, formatTimeShort } from '../utils/format';
 import { vGlow } from '../directives/glow';
 
@@ -16,6 +30,22 @@ const searchKeyword = ref('');
 const searchHits = ref<UserProfile[]>([]);
 const searching = ref(false);
 let searchTimer: number | null = null;
+
+// 右键液态玻璃菜单状态
+const ctxMenu = ref<{ conv: Conversation; x: number; y: number } | null>(null);
+
+function closeCtxMenu() {
+  ctxMenu.value = null;
+}
+
+onMounted(() => window.addEventListener('click', closeCtxMenu));
+onUnmounted(() => window.removeEventListener('click', closeCtxMenu));
+
+function openCtxMenu(ev: MouseEvent, conv: Conversation) {
+  const x = Math.min(ev.clientX, window.innerWidth - 190);
+  const y = Math.min(ev.clientY, window.innerHeight - 160);
+  ctxMenu.value = { conv, x, y };
+}
 
 function handleSearchInput() {
   if (searchTimer) window.clearTimeout(searchTimer);
@@ -44,6 +74,11 @@ async function handlePickUser(user: UserProfile) {
   } catch (e: any) {
     store.pushToast(e.message || '创建私聊失败', 'error');
   }
+}
+
+function getDraftText(convId: string): string {
+  if (convId === store.activeConvId) return '';
+  return store.drafts[convId] || '';
 }
 </script>
 
@@ -156,46 +191,112 @@ async function handlePickUser(user: UserProfile) {
       </button>
     </div>
 
-    <!-- 会话列表 -->
+    <!-- 会话列表（右键置顶 / 免打扰 / 标为已读） -->
     <div class="conv-scroll">
       <div v-if="store.conversations.length === 0" class="conv-empty">
         暂无会话，搜索用户名发起单聊或点击「建群」
       </div>
 
       <TransitionGroup tag="div" name="conv" class="conv-list">
-
-      <button
-        v-for="conv in store.conversations"
-        :key="conv.id"
-        type="button"
-        class="conv-item"
-        :class="{ active: conv.id === store.activeConvId }"
-        @click="store.selectConversation(conv.id)"
-      >
-        <div
-          class="avatar"
-          :style="{ background: conv.type === 2 ? '#0D7A5F' : avatarColor(conv.title) }"
+        <button
+          v-for="conv in store.conversations"
+          :key="conv.id"
+          type="button"
+          class="conv-item"
+          :class="{ active: conv.id === store.activeConvId, pinned: conv.pinned }"
+          title="右键可置顶、免打扰或标为已读"
+          @click="store.selectConversation(conv.id)"
+          @contextmenu.prevent="openCtxMenu($event, conv)"
         >
-          <Users v-if="conv.type === 2" :size="16" />
-          <span v-else>{{ avatarInitial(conv.title) }}</span>
-          <span v-if="conv.type === 1 && conv.peerOnline" class="online-dot" title="当前在线" />
-        </div>
+          <div
+            class="avatar"
+            :style="{ background: conv.type === 2 ? '#0D7A5F' : avatarColor(conv.title) }"
+          >
+            <Users v-if="conv.type === 2" :size="16" />
+            <span v-else>{{ avatarInitial(conv.title) }}</span>
+            <span v-if="conv.type === 1 && conv.peerOnline" class="online-dot" title="当前在线" />
+          </div>
 
-        <div class="conv-body">
-          <div class="conv-top">
-            <span class="conv-title">{{ conv.title }}</span>
-            <span class="conv-time tabular">{{ formatTimeShort(conv.lastMsgTime) }}</span>
+          <div class="conv-body">
+            <div class="conv-top">
+              <span class="conv-title-wrap">
+                <Pin v-if="conv.pinned" :size="11" class="pin-mark" />
+                <span class="conv-title">{{ conv.title }}</span>
+              </span>
+              <span class="conv-time tabular">{{ formatTimeShort(conv.lastMsgTime) }}</span>
+            </div>
+
+            <div class="conv-bottom">
+              <span class="conv-preview">
+                <template v-if="getDraftText(conv.id)">
+                  <span class="alert-prefix">[草稿]</span> {{ getDraftText(conv.id) }}
+                </template>
+                <template v-else-if="conv.mentionSeq && conv.id !== store.activeConvId">
+                  <span class="alert-prefix">[有人@我]</span> {{ conv.lastMsgPreview || '提到了你' }}
+                </template>
+                <template v-else>
+                  {{ conv.lastMsgPreview || '暂无消息' }}
+                </template>
+              </span>
+
+              <span class="conv-badges">
+                <BellOff v-if="conv.muted" :size="12" class="mute-icon" title="已开启免打扰" />
+                <span
+                  v-if="conv.unreadCount > 0"
+                  :key="conv.unreadCount"
+                  class="unread-badge tabular"
+                  :class="{ muted: conv.muted }"
+                >
+                  {{ conv.unreadCount > 99 ? '99+' : conv.unreadCount }}
+                </span>
+              </span>
+            </div>
           </div>
-          <div class="conv-bottom">
-            <span class="conv-preview">{{ conv.lastMsgPreview || '暂无消息' }}</span>
-            <span v-if="conv.unreadCount > 0" :key="conv.unreadCount" class="unread-badge tabular">
-              {{ conv.unreadCount > 99 ? '99+' : conv.unreadCount }}
-            </span>
-          </div>
-        </div>
-      </button>
+        </button>
       </TransitionGroup>
     </div>
+
+    <!-- 右键液态玻璃上下文菜单 -->
+    <Teleport to="body">
+      <Transition name="pop">
+        <div
+          v-if="ctxMenu"
+          class="ctx-menu glass-strong"
+          :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="ctx-item"
+            @click="store.updateConvPreferences(ctxMenu.conv.id, { pinned: !ctxMenu.conv.pinned }); closeCtxMenu()"
+          >
+            <PinOff v-if="ctxMenu.conv.pinned" :size="14" />
+            <Pin v-else :size="14" />
+            <span>{{ ctxMenu.conv.pinned ? '取消置顶' : '置顶会话' }}</span>
+          </button>
+
+          <button
+            type="button"
+            class="ctx-item"
+            @click="store.updateConvPreferences(ctxMenu.conv.id, { muted: !ctxMenu.conv.muted }); closeCtxMenu()"
+          >
+            <Bell v-if="ctxMenu.conv.muted" :size="14" />
+            <BellOff v-else :size="14" />
+            <span>{{ ctxMenu.conv.muted ? '取消免打扰' : '消息免打扰' }}</span>
+          </button>
+
+          <button
+            v-if="ctxMenu.conv.unreadCount > 0"
+            type="button"
+            class="ctx-item"
+            @click="store.markConvAsReadManual(ctxMenu.conv.id); closeCtxMenu()"
+          >
+            <CheckCheck :size="14" />
+            <span>标为已读</span>
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
   </aside>
 </template>
 
@@ -312,7 +413,7 @@ async function handlePickUser(user: UserProfile) {
   flex: 1;
   min-width: 0;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: 8px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--ink);
@@ -344,7 +445,7 @@ async function handlePickUser(user: UserProfile) {
 .search-input {
   width: 100%;
   padding: 6px 9px 6px 28px;
-  border-radius: 7px;
+  border-radius: 10px;
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--ink);
@@ -391,7 +492,7 @@ async function handlePickUser(user: UserProfile) {
   border: none;
   background: transparent;
   color: var(--ink);
-  border-radius: 7px;
+  border-radius: 9px;
   cursor: pointer;
   text-align: left;
 }
@@ -436,8 +537,8 @@ async function handlePickUser(user: UserProfile) {
 }
 
 .conv-item {
+  position: relative;
   width: 100%;
-  border: none;
   background: transparent;
   color: var(--ink);
   display: flex;
@@ -453,6 +554,10 @@ async function handlePickUser(user: UserProfile) {
     border-color 0.25s,
     box-shadow 0.35s var(--ease-out),
     transform 0.4s var(--ease-spring);
+}
+
+.conv-item.pinned {
+  background: rgba(47, 91, 255, 0.05);
 }
 
 .conv-item:hover {
@@ -483,10 +588,6 @@ async function handlePickUser(user: UserProfile) {
   animation: pop-in 0.4s var(--ease-spring);
 }
 
-.conv-item {
-  position: relative;
-}
-
 .conv-body {
   flex: 1;
   min-width: 0;
@@ -500,6 +601,18 @@ async function handlePickUser(user: UserProfile) {
   justify-content: space-between;
   align-items: center;
   gap: 6px;
+}
+
+.conv-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pin-mark {
+  color: var(--accent);
+  flex-shrink: 0;
 }
 
 .conv-title {
@@ -531,6 +644,22 @@ async function handlePickUser(user: UserProfile) {
   text-overflow: ellipsis;
 }
 
+.alert-prefix {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.conv-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.mute-icon {
+  color: var(--ink-muted);
+}
+
 .unread-badge {
   background: linear-gradient(135deg, #FF5A65, #E0313B);
   color: #fff;
@@ -543,8 +672,49 @@ async function handlePickUser(user: UserProfile) {
   animation: badge-pop 0.5s var(--ease-spring);
 }
 
+.unread-badge.muted {
+  background: var(--ink-muted);
+  box-shadow: none;
+}
+
 @keyframes badge-pop {
   0% { transform: scale(0.3); }
   100% { transform: scale(1); }
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 164px;
+  padding: 5px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  backdrop-filter: blur(26px) saturate(190%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ctx-item {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.18s;
+}
+
+.ctx-item:hover {
+  background: var(--hover);
+  color: var(--accent);
 }
 </style>

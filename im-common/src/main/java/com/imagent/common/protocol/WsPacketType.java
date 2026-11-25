@@ -15,6 +15,10 @@ public enum WsPacketType {
     MSG_ACK,
     MSG_RECALL,
     TYPING,
+    READ_RECEIPT,
+    MSG_REACTION,
+    MSG_PIN,
+    CONV_UPDATE,
 
     // AI Agent 流式交互、打断与人机协同
     AGENT_STREAM,

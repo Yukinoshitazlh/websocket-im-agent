@@ -3,11 +3,16 @@ package com.imagent.server.controller;
 import com.imagent.common.model.Result;
 import com.imagent.server.common.UserContext;
 import com.imagent.server.dto.MessageVO;
+import com.imagent.server.dto.ReactionGroupVO;
+import com.imagent.server.dto.ToggleReactionRequest;
+import com.imagent.server.service.MessageCollabService;
 import com.imagent.server.service.MessageService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -20,6 +25,7 @@ import java.util.List;
 public class MessageController {
 
     private final MessageService messageService;
+    private final MessageCollabService messageCollabService;
 
     /**
      * 游标分页历史记录：不传 beforeSeq 拉取最新；传入 beforeSeq 向上加载更早消息（无 OFFSET 深分页问题）
@@ -70,5 +76,15 @@ public class MessageController {
     public Result<Void> recall(@PathVariable Long msgId) {
         messageService.recallMessage(UserContext.getUserId(), msgId);
         return Result.ok();
+    }
+
+    /**
+     * 飞书式消息表情表态（幂等 Toggle，实时广播 MSG_REACTION）
+     */
+    @PostMapping("/{msgId}/reactions")
+    public Result<List<ReactionGroupVO>> toggleReaction(
+            @PathVariable Long msgId,
+            @Valid @RequestBody ToggleReactionRequest request) {
+        return Result.ok(messageCollabService.toggleReaction(UserContext.getUserId(), msgId, request.getEmoji()));
     }
 }

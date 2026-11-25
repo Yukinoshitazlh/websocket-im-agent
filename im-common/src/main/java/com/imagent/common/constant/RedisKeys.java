@@ -77,4 +77,14 @@ public final class RedisKeys {
     public static String reminderDelayZSet() {
         return "im:delay:reminders";
     }
+
+    /** 会话成员已读水位 Hash：im:conv:readseq:{convId} (field=userId, value=lastReadSeq) */
+    public static String conversationReadSeqHash(Long conversationId) {
+        return "im:conv:readseq:" + conversationId;
+    }
+
+    /** 用户会话被 @ 提醒水位 Hash：im:unread:at:{userId} (field=convId, value=firstAtSeq) */
+    public static String userMentionHash(Long userId) {
+        return "im:unread:at:" + userId;
+    }
 }

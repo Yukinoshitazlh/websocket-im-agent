@@ -41,6 +41,7 @@ class MessageServiceIdempotencyTest {
     @Mock private UnreadService unreadService;
     @Mock private AgentBridgeService agentBridgeService;
     @Mock private RateLimitService rateLimitService;
+    @Mock private MessageCollabService messageCollabService;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOperations;
     @Mock private RabbitTemplate rabbitTemplate;
@@ -53,8 +54,8 @@ class MessageServiceIdempotencyTest {
     void setUp() {
         messageService = new MessageService(
                 messageMapper, conversationMapper, userMapper, userService, conversationService,
-                seqGeneratorService, unreadService, agentBridgeService, rateLimitService, redisTemplate, rabbitTemplate,
-                transactionTemplate, objectMapper, Runnable::run
+                seqGeneratorService, unreadService, agentBridgeService, rateLimitService, messageCollabService,
+                redisTemplate, rabbitTemplate, transactionTemplate, objectMapper, Runnable::run
         );
     }
 
