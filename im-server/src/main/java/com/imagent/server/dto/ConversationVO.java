@@ -26,7 +26,10 @@ public class ConversationVO {
     private Integer memberCount;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long peerUserId;
+    private String peerAvatar;
     private Boolean peerOnline;
+    private String peerStatusEmoji;
+    private String peerStatusText;
     private String lastMsgPreview;
     private Long lastMsgTime;
 }

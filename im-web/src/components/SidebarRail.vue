@@ -15,7 +15,8 @@ import {
 } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import type { Conversation, UserProfile } from '../types/im';
-import { avatarColor, avatarInitial, formatTimeShort } from '../utils/format';
+import { formatTimeShort } from '../utils/format';
+import UserAvatar from './UserAvatar.vue';
 import { vGlow } from '../directives/glow';
 
 const emit = defineEmits<{
@@ -131,13 +132,12 @@ function getDraftText(convId: string): string {
               class="search-item"
               @click="handlePickConversation(c.id)"
             >
-              <span
-                class="avatar avatar-sm"
-                :style="{ background: c.type === 2 ? '#0D7A5F' : avatarColor(c.title) }"
-              >
-                <Users v-if="c.type === 2" :size="13" />
-                <span v-else>{{ avatarInitial(c.title) }}</span>
-              </span>
+              <UserAvatar
+                :name="c.title"
+                :src="c.type === 1 ? c.peerAvatar : null"
+                :is-group="c.type === 2"
+                size="sm"
+              />
               <span class="search-item-meta">
                 <strong>{{ c.title }}</strong>
                 <small>{{ c.lastMsgPreview || (c.type === 2 ? '群聊' : '私聊') }}</small>
@@ -155,9 +155,7 @@ function getDraftText(convId: string): string {
             class="search-item"
             @click="handlePickUser(u)"
           >
-            <span class="avatar avatar-sm" :style="{ background: avatarColor(u.username) }">
-              {{ avatarInitial(u.nickname) }}
-            </span>
+            <UserAvatar :name="u.nickname" :seed="u.username" :src="u.avatar" size="sm" />
             <span class="search-item-meta">
               <strong>{{ u.nickname }}</strong>
               <small>@{{ u.username }}</small>
@@ -230,14 +228,13 @@ function getDraftText(convId: string): string {
           @click="store.selectConversation(conv.id)"
           @contextmenu.prevent="openCtxMenu($event, conv)"
         >
-          <div
-            class="avatar"
-            :style="{ background: conv.type === 2 ? '#0D7A5F' : avatarColor(conv.title) }"
-          >
-            <Users v-if="conv.type === 2" :size="16" />
-            <span v-else>{{ avatarInitial(conv.title) }}</span>
-            <span v-if="conv.type === 1 && conv.peerOnline" class="online-dot" title="当前在线" />
-          </div>
+          <UserAvatar
+            :name="conv.title"
+            :src="conv.type === 1 ? conv.peerAvatar : null"
+            :is-group="conv.type === 2"
+            :online="conv.type === 1 && Boolean(conv.peerOnline)"
+            size="md"
+          />
 
           <div class="conv-body">
             <div class="conv-top">

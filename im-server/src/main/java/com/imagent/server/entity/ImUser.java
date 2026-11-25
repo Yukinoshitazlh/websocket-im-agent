@@ -16,6 +16,10 @@ public class ImUser {
     private String passwordHash;
     private String nickname;
     private String avatar;
+    private String signature;
+    private String bio;
+    private String statusEmoji;
+    private String statusText;
     private Integer userType;
     private Integer status;
     private LocalDateTime createdAt;

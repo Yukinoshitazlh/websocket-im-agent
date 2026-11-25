@@ -32,6 +32,8 @@ import GroupModal from './components/GroupModal.vue';
 import ReadDetailModal from './components/ReadDetailModal.vue';
 import ForwardModal from './components/ForwardModal.vue';
 import BundleViewerModal from './components/BundleViewerModal.vue';
+import ProfileModal from './components/ProfileModal.vue';
+import UserAvatar from './components/UserAvatar.vue';
 import type { ChatMessage } from './types/im';
 import { avatarColor, avatarInitial, formatDateDivider, formatFileSize } from './utils/format';
 
@@ -121,6 +123,7 @@ onUnmounted(() => {
 function onGlobalKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (store.lightboxUrl) store.lightboxUrl = null;
+    else if (store.viewingProfile) store.viewingProfile = null;
     else if (store.viewingBundle) store.viewingBundle = null;
     else if (store.readDetailMsg) store.readDetailMsg = null;
     else if (showForwardModal.value) showForwardModal.value = false;
@@ -638,15 +641,33 @@ function handleAiSummarizeSelected() {
           </div>
         </Transition>
 
-        <!-- 顶栏（极简微信/飞书风格：搜索 / 群管理 / AI 助手按需滑出右侧抽屉） -->
+        <!-- 顶栏（极简微信/飞书风格：搜索 / 群管理 / AI 助手 + 右上角个人头像资料入口） -->
         <header class="chat-header">
           <div class="header-left">
             <template v-if="store.activeConversation">
               <Transition name="tab-swap" mode="out-in">
-                <h2 :key="store.activeConversation.id" class="conv-heading">
+                <button
+                  v-if="store.activeConversation.type === 1 && store.activeConversation.peerUserId"
+                  :key="store.activeConversation.id"
+                  type="button"
+                  class="peer-title-btn"
+                  title="点击查看对方资料名片"
+                  @click="store.openProfile(store.activeConversation.peerUserId)"
+                >
+                  <UserAvatar
+                    :name="store.activeConversation.title"
+                    :src="store.activeConversation.peerAvatar"
+                    :online="Boolean(store.activeConversation.peerOnline)"
+                    size="xs"
+                    clickable
+                  />
+                  <span class="conv-heading">{{ store.activeConversation.title }}</span>
+                </button>
+                <h2 v-else :key="'g-' + store.activeConversation.id" class="conv-heading">
                   {{ store.activeConversation.title }}
                 </h2>
               </Transition>
+
               <span
                 v-if="store.activeConversation.type === 1"
                 class="presence-pill"
@@ -655,8 +676,15 @@ function handleAiSummarizeSelected() {
                 <span class="dot" />
                 <span>{{ store.activeConversation.peerOnline ? '在线' : '离线' }}</span>
               </span>
+              <span
+                v-if="store.activeConversation.type === 1 && store.activeConversation.peerStatusText"
+                class="peer-status-pill"
+              >
+                {{ store.activeConversation.peerStatusEmoji }} {{ store.activeConversation.peerStatusText }}
+              </span>
+
               <button
-                v-else
+                v-if="store.activeConversation.type === 2"
                 type="button"
                 class="type-pill clickable"
                 title="查看和管理群成员"
@@ -675,46 +703,67 @@ function handleAiSummarizeSelected() {
             <h2 v-else class="conv-heading muted">PulseIM</h2>
           </div>
 
-          <div v-if="store.activeConversation" class="header-right">
-            <Transition name="fade" mode="out-in">
-              <span
-                v-if="store.syncNotice && (store.demoMode || store.syncNotice.includes('补齐'))"
-                :key="store.syncNotice"
-                class="sync-pill liquid-lens tabular"
+          <div class="header-right">
+            <template v-if="store.activeConversation">
+              <Transition name="fade" mode="out-in">
+                <span
+                  v-if="store.syncNotice && (store.demoMode || store.syncNotice.includes('补齐'))"
+                  :key="store.syncNotice"
+                  class="sync-pill liquid-lens tabular"
+                >
+                  {{ store.syncNotice }}
+                </span>
+              </Transition>
+
+              <button
+                type="button"
+                class="btn-icon"
+                :class="{ 'is-active': showInspector && currentDrawerTab === 'search' }"
+                title="查找聊天记录"
+                @click="toggleDrawerTab('search')"
               >
-                {{ store.syncNotice }}
+                <Search :size="16" />
+              </button>
+
+              <button
+                v-if="store.activeConversation.type === 2"
+                type="button"
+                class="btn-icon"
+                :class="{ 'is-active': showInspector && currentDrawerTab === 'group' }"
+                title="群成员与管理"
+                @click="toggleDrawerTab('group')"
+              >
+                <Users :size="16" />
+              </button>
+
+              <button
+                type="button"
+                class="btn-icon"
+                :class="{ 'is-active': showInspector && currentDrawerTab === 'metrics' }"
+                title="AI 助手与日程提醒"
+                @click="toggleDrawerTab('metrics')"
+              >
+                <Sparkles :size="16" />
+              </button>
+            </template>
+
+            <!-- 右上角个人头像快捷入口：点击即可改头像 / 改昵称 / 设签名与简介 / 切状态 -->
+            <button
+              type="button"
+              class="header-me-pill"
+              title="点击编辑个人资料、更换头像、个性签名与状态"
+              @click="store.openProfile()"
+            >
+              <UserAvatar
+                :name="store.currentUser.nickname"
+                :seed="store.currentUser.username"
+                :src="store.currentUser.avatar"
+                size="xs"
+                clickable
+              />
+              <span v-if="store.currentUser.statusEmoji" class="me-status-mini">
+                {{ store.currentUser.statusEmoji }}
               </span>
-            </Transition>
-
-            <button
-              type="button"
-              class="btn-icon"
-              :class="{ 'is-active': showInspector && currentDrawerTab === 'search' }"
-              title="查找聊天记录"
-              @click="toggleDrawerTab('search')"
-            >
-              <Search :size="16" />
-            </button>
-
-            <button
-              v-if="store.activeConversation.type === 2"
-              type="button"
-              class="btn-icon"
-              :class="{ 'is-active': showInspector && currentDrawerTab === 'group' }"
-              title="群成员与管理"
-              @click="toggleDrawerTab('group')"
-            >
-              <Users :size="16" />
-            </button>
-
-            <button
-              type="button"
-              class="btn-icon"
-              :class="{ 'is-active': showInspector && currentDrawerTab === 'metrics' }"
-              title="AI 助手与日程提醒"
-              @click="toggleDrawerTab('metrics')"
-            >
-              <Sparkles :size="16" />
             </button>
           </div>
         </header>
@@ -851,6 +900,7 @@ function handleAiSummarizeSelected() {
                 @toggle-select="store.toggleSelectMsg"
                 @open-read-detail="store.readDetailMsg = $event"
                 @open-bundle="store.viewingBundle = $event"
+                @open-profile="store.openProfile"
                 @jump-to-msg-id="jumpToMsgId"
                 @preview-image="store.lightboxUrl = $event"
                 @copied="store.pushToast($event)"
@@ -1181,6 +1231,15 @@ function handleAiSummarizeSelected() {
     <GroupModal v-if="showGroupModal" @close="showGroupModal = false" />
   </Transition>
 
+  <!-- 个人资料编辑 / 他人资料名片弹窗 -->
+  <Transition name="modal">
+    <ProfileModal
+      v-if="store.viewingProfile"
+      :profile="store.viewingProfile"
+      @close="store.viewingProfile = null"
+    />
+  </Transition>
+
   <!-- 飞书已读明细弹窗 -->
   <Transition name="modal">
     <ReadDetailModal
@@ -1299,6 +1358,68 @@ function handleAiSummarizeSelected() {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.peer-title-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 12px;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.18s;
+}
+
+.peer-title-btn:hover {
+  background: var(--hover);
+}
+
+.peer-status-pill {
+  font-size: 11.5px;
+  color: var(--ink-secondary);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.header-me-pill {
+  position: relative;
+  border: 1px solid var(--glass-edge);
+  background: var(--surface);
+  padding: 3px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  margin-left: 2px;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.3s var(--ease-spring), border-color 0.2s;
+}
+
+.header-me-pill:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+.me-status-mini {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .conv-heading {

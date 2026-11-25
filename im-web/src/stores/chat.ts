@@ -17,6 +17,7 @@ import type {
 } from '../types/im';
 import { apiRequest, uploadFileWithInstantCheck } from '../utils/api';
 import { cacheConversationMessages, loadCachedMessages } from '../utils/db';
+import { playMessageChime } from '../utils/sound';
 
 export interface ToastItem {
   id: number;
@@ -38,6 +39,8 @@ export const useChatStore = defineStore('chat', () => {
   const wsUrl = ref<string>(sessionStorage.getItem('im_ws_url') || 'ws://127.0.0.1:9001/ws');
   const theme = ref<'light' | 'dark'>((localStorage.getItem('im_theme') as 'light' | 'dark') || 'light');
   const demoMode = ref<boolean>(localStorage.getItem('im_demo_mode') === '1');
+  const soundEnabled = ref<boolean>(localStorage.getItem('im_sound') !== '0');
+  const viewingProfile = ref<UserProfile | null>(null);
 
   const wsState = ref<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const wsStatusText = ref<string>('未连接');
@@ -158,6 +161,93 @@ export const useChatStore = defineStore('chat', () => {
         ? '已开启面试演练模式：显示双网关切换、断网模拟、#seq 与幂等重发'
         : '已切回日常纯净模式'
     );
+  }
+
+  function toggleSound() {
+    soundEnabled.value = !soundEnabled.value;
+    localStorage.setItem('im_sound', soundEnabled.value ? '1' : '0');
+    if (soundEnabled.value) {
+      playMessageChime();
+    }
+  }
+
+  async function refreshMyProfile() {
+    if (!token.value) return;
+    try {
+      const fresh = await apiRequest<UserProfile>('/api/users/me', token.value);
+      currentUser.value = fresh;
+      sessionStorage.setItem('im_user', JSON.stringify(fresh));
+      if (viewingProfile.value && String(viewingProfile.value.id) === String(fresh.id)) {
+        viewingProfile.value = fresh;
+      }
+    } catch {
+      // ignore silent refresh failure
+    }
+  }
+
+  async function openProfile(userId?: string) {
+    if (!currentUser.value) return;
+    const isMe = !userId || String(userId) === String(currentUser.value.id);
+    if (isMe) {
+      viewingProfile.value = { ...currentUser.value };
+      refreshMyProfile();
+      return;
+    }
+    try {
+      viewingProfile.value = await apiRequest<UserProfile>(
+        `/api/users/${encodeURIComponent(userId)}`,
+        token.value
+      );
+    } catch (e: any) {
+      pushToast(e.message || '加载用户资料失败', 'error');
+    }
+  }
+
+  async function uploadAvatarFile(file: File): Promise<string> {
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error('头像图片不能超过 10MB');
+    }
+    const uploaded = await uploadFileWithInstantCheck(file, token.value);
+    return uploaded.url;
+  }
+
+  async function updateMyProfile(payload: {
+    nickname: string;
+    avatar: string;
+    signature: string;
+    bio: string;
+    statusEmoji: string;
+    statusText: string;
+  }) {
+    const updated = await apiRequest<UserProfile>('/api/users/me', token.value, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    currentUser.value = updated;
+    sessionStorage.setItem('im_user', JSON.stringify(updated));
+    if (viewingProfile.value && String(viewingProfile.value.id) === String(updated.id)) {
+      viewingProfile.value = updated;
+    }
+    // 立刻刷新当前会话里自己已发消息的头像和昵称
+    for (const m of messages.value) {
+      if (String(m.senderId) === String(updated.id)) {
+        m.senderNickname = updated.nickname;
+        m.senderAvatar = updated.avatar;
+      }
+    }
+    if (activeConvId.value) {
+      loadActiveMembers(activeConvId.value);
+    }
+    loadConversations();
+    pushToast('个人资料已保存', 'success');
+  }
+
+  async function changeMyPassword(oldPassword: string, newPassword: string) {
+    await apiRequest<void>('/api/users/me/password', token.value, {
+      method: 'PUT',
+      body: JSON.stringify({ oldPassword, newPassword })
+    });
+    pushToast('登录密码已更新，下次登录生效', 'success');
   }
 
   function pushToast(text: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -710,6 +800,7 @@ export const useChatStore = defineStore('chat', () => {
         conversationId: targetConvId,
         senderId: currentUser.value.id,
         senderNickname: currentUser.value.nickname,
+        senderAvatar: currentUser.value.avatar || '',
         clientMsgId,
         seq: 0,
         msgType,
@@ -1020,6 +1111,7 @@ export const useChatStore = defineStore('chat', () => {
       conversationId: String(raw.conversationId),
       senderId: String(raw.senderId),
       senderNickname: raw.senderNickname || '用户',
+      senderAvatar: raw.senderAvatar || '',
       clientMsgId: raw.clientMsgId,
       seq: Number(raw.seq),
       msgType: raw.msgType || 'TEXT',
@@ -1036,9 +1128,14 @@ export const useChatStore = defineStore('chat', () => {
     };
 
     const conv = conversations.value.find((c) => c.id === incoming.conversationId);
-    if (document.hidden && incoming.senderId !== currentUser.value?.id && !conv?.muted) {
-      hiddenUnreadCount++;
-      updateDocumentTitle();
+    if (incoming.senderId !== currentUser.value?.id && !conv?.muted && incoming.msgType !== 'SYSTEM') {
+      if (soundEnabled.value) {
+        playMessageChime();
+      }
+      if (document.hidden) {
+        hiddenUnreadCount++;
+        updateDocumentTitle();
+      }
     }
 
     if (incoming.conversationId === activeConvId.value) {
@@ -1252,6 +1349,7 @@ export const useChatStore = defineStore('chat', () => {
 
   if (token.value && currentUser.value) {
     loadDraftsFromStorage();
+    refreshMyProfile();
     loadConversations();
     connectWs();
   }
@@ -1262,6 +1360,8 @@ export const useChatStore = defineStore('chat', () => {
     wsUrl,
     theme,
     demoMode,
+    soundEnabled,
+    viewingProfile,
     wsState,
     wsStatusText,
     wsRttMs,
@@ -1297,6 +1397,11 @@ export const useChatStore = defineStore('chat', () => {
     lightboxUrl,
     toggleTheme,
     toggleDemoMode,
+    toggleSound,
+    openProfile,
+    uploadAvatarFile,
+    updateMyProfile,
+    changeMyPassword,
     pushToast,
     flashHighlightSeq,
     setDraft,

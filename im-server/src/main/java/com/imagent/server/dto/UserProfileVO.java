@@ -16,5 +16,10 @@ public class UserProfileVO {
     private String username;
     private String nickname;
     private String avatar;
+    private String signature;
+    private String bio;
+    private String statusEmoji;
+    private String statusText;
+    private Boolean online;
     private Integer userType;
 }

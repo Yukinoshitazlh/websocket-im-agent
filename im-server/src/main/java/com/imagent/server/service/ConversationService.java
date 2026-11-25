@@ -155,7 +155,10 @@ public class ConversationService {
                     ? (peer != null ? peer.getNickname() : "单聊会话")
                     : conv.getTitle();
             Long peerUserId = peer != null ? peer.getId() : null;
+            String peerAvatar = peer != null ? peer.getAvatar() : null;
             Boolean peerOnline = peerUserId != null ? peerOnlineMap.getOrDefault(peerUserId, false) : null;
+            String peerStatusEmoji = peer != null ? peer.getStatusEmoji() : null;
+            String peerStatusText = peer != null ? peer.getStatusText() : null;
 
             ImConversationMember self = memberMap.get(conv.getId());
             long lastRead = (self != null && self.getLastReadSeq() != null) ? self.getLastReadSeq() : 0L;
@@ -166,7 +169,8 @@ public class ConversationService {
             Long mentionSeq = mentionMap.get(conv.getId());
             int memberCount = countMap.getOrDefault(conv.getId(), isDirect ? 2 : 1);
 
-            result.add(toVO(conv, displayTitle, lastRead, unread, mentionSeq, pinned, muted, memberCount, peerUserId, peerOnline));
+            result.add(toVO(conv, displayTitle, lastRead, unread, mentionSeq, pinned, muted,
+                    memberCount, peerUserId, peerAvatar, peerOnline, peerStatusEmoji, peerStatusText));
         }
 
         // 微信/飞书排序：置顶会话优先，其次按最近消息时间倒序
@@ -231,6 +235,10 @@ public class ConversationService {
                     .userId(m.getUserId())
                     .username(u != null ? u.getUsername() : "user" + m.getUserId())
                     .nickname(u != null ? u.getNickname() : "用户" + m.getUserId())
+                    .avatar(u != null ? u.getAvatar() : "")
+                    .signature(u != null ? u.getSignature() : "")
+                    .statusEmoji(u != null ? u.getStatusEmoji() : "")
+                    .statusText(u != null ? u.getStatusText() : "")
                     .role(m.getRole() == null ? 1 : m.getRole())
                     .online(onlineMap.getOrDefault(m.getUserId(), false))
                     .lastReadSeq(effectiveSeq)
@@ -452,12 +460,13 @@ public class ConversationService {
     }
 
     private ConversationVO toVO(ImConversation conv, String displayTitle) {
-        return toVO(conv, displayTitle, 0L, 0L, null, false, false, 2, null, null);
+        return toVO(conv, displayTitle, 0L, 0L, null, false, false, 2, null, null, null, null, null);
     }
 
     private ConversationVO toVO(ImConversation conv, String displayTitle, long lastReadSeq,
                                 long unreadCount, Long mentionSeq, boolean pinned, boolean muted,
-                                int memberCount, Long peerUserId, Boolean peerOnline) {
+                                int memberCount, Long peerUserId, String peerAvatar, Boolean peerOnline,
+                                String peerStatusEmoji, String peerStatusText) {
         Long lastTime = conv.getLastMsgTime() != null
                 ? conv.getLastMsgTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 : null;
@@ -474,7 +483,10 @@ public class ConversationService {
                 .muted(muted)
                 .memberCount(memberCount)
                 .peerUserId(peerUserId)
+                .peerAvatar(peerAvatar)
                 .peerOnline(peerOnline)
+                .peerStatusEmoji(peerStatusEmoji)
+                .peerStatusText(peerStatusText)
                 .lastMsgPreview(conv.getLastMsgPreview())
                 .lastMsgTime(lastTime)
                 .build();

@@ -58,6 +58,11 @@ public final class RedisKeys {
         return "im:user:nick:" + userId;
     }
 
+    /** 用户头像缓存：im:user:avatar:{userId} */
+    public static String userAvatar(Long userId) {
+        return "im:user:avatar:" + userId;
+    }
+
     /** 普通消息发送限流键 */
     public static String chatRateLimit(Long userId) {
         return "im:rl:chat:" + userId;

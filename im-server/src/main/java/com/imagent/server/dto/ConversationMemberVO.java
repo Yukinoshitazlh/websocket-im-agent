@@ -15,6 +15,10 @@ public class ConversationMemberVO {
     private Long userId;
     private String username;
     private String nickname;
+    private String avatar;
+    private String signature;
+    private String statusEmoji;
+    private String statusText;
     private Integer role;
     private Boolean online;
     private Long lastReadSeq;

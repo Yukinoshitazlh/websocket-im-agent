@@ -23,6 +23,7 @@ public class ChatPushPayload {
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long senderId;
     private String senderNickname;
+    private String senderAvatar;
     private String clientMsgId;
     private Long seq;
     private String msgType;

@@ -12,14 +12,13 @@ import {
 } from 'lucide-vue-next';
 import type { ChatMessage, ConversationMember, ForwardBundleMeta } from '../types/im';
 import {
-  avatarColor,
-  avatarInitial,
   formatFileSize,
   formatTimeShort,
   parseFileMeta,
   parseForwardBundle
 } from '../utils/format';
 import { renderMarkdownSafe } from '../utils/markdown';
+import UserAvatar from './UserAvatar.vue';
 
 const SLIM_EMOJIS = ['👍', '❤️', '🔥'];
 
@@ -42,6 +41,7 @@ const emit = defineEmits<{
   (e: 'toggle-select', msgId: string): void;
   (e: 'open-read-detail', msg: ChatMessage): void;
   (e: 'open-bundle', meta: ForwardBundleMeta): void;
+  (e: 'open-profile', userId: string): void;
   (e: 'jump-to-msg-id', msgId: string): void;
   (e: 'preview-image', url: string): void;
   (e: 'copied', text: string): void;
@@ -55,6 +55,12 @@ const fileMeta = computed(() => parseFileMeta(props.message.extra));
 const bundleMeta = computed(() =>
   props.message.msgType === 'FORWARD_BUNDLE' ? parseForwardBundle(props.message.extra) : null
 );
+
+const resolvedAvatar = computed(() => {
+  if (props.message.senderAvatar) return props.message.senderAvatar;
+  const hit = props.members.find((m) => String(m.userId) === String(props.message.senderId));
+  return hit?.avatar || '';
+});
 
 // 微信/飞书节奏：单聊日常模式隐藏重复昵称，群聊/AI/演练模式才显示头部信息
 const showMetaHeader = computed(() => {
@@ -166,15 +172,21 @@ function handleContextMenu(ev: MouseEvent) {
     </div>
 
     <div class="avatar-col">
-      <div
+      <button
         v-if="!grouped"
-        class="avatar avatar-sm"
-        :class="{ 'avatar-ai': isAi }"
-        :style="isAi ? undefined : { background: avatarColor(message.senderNickname) }"
+        type="button"
+        class="avatar-click-btn"
+        :title="isMine ? '点击编辑个人资料、头像、签名与状态' : `点击查看 ${message.senderNickname} 的资料名片`"
+        @click.stop="emit('open-profile', message.senderId)"
       >
-        <Sparkles v-if="isAi" :size="14" />
-        <span v-else>{{ avatarInitial(message.senderNickname) }}</span>
-      </div>
+        <UserAvatar
+          :name="message.senderNickname"
+          :src="resolvedAvatar"
+          :is-ai="isAi"
+          size="sm"
+          clickable
+        />
+      </button>
     </div>
 
     <div class="msg-col">
@@ -542,6 +554,14 @@ function handleContextMenu(ev: MouseEvent) {
 .avatar-col {
   width: 32px;
   flex-shrink: 0;
+}
+
+.avatar-click-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  display: inline-flex;
+  cursor: pointer;
 }
 
 .msg-col {

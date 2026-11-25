@@ -9,6 +9,11 @@ export interface UserProfile {
   username: string;
   nickname: string;
   avatar: string;
+  signature?: string;
+  bio?: string;
+  statusEmoji?: string;
+  statusText?: string;
+  online?: boolean | null;
   userType: number;
 }
 
@@ -30,7 +35,10 @@ export interface Conversation {
   muted?: boolean;
   memberCount?: number;
   peerUserId?: string | null;
+  peerAvatar?: string | null;
   peerOnline?: boolean | null;
+  peerStatusEmoji?: string | null;
+  peerStatusText?: string | null;
   lastMsgPreview: string;
   lastMsgTime?: number | null;
 }
@@ -39,6 +47,10 @@ export interface ConversationMember {
   userId: string;
   username: string;
   nickname: string;
+  avatar?: string;
+  signature?: string;
+  statusEmoji?: string;
+  statusText?: string;
   role: number; // 1=普通成员, 2=管理员, 3=群主
   online: boolean;
   lastReadSeq: number;
@@ -88,6 +100,7 @@ export interface ChatMessage {
   conversationId: string;
   senderId: string;
   senderNickname: string;
+  senderAvatar?: string;
   clientMsgId?: string;
   seq: number;
   msgType:

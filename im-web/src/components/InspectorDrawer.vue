@@ -15,7 +15,8 @@ import {
 } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import type { UserProfile } from '../types/im';
-import { avatarColor, avatarInitial, formatIsoDateTime, formatTimeShort } from '../utils/format';
+import { formatIsoDateTime, formatTimeShort } from '../utils/format';
+import UserAvatar from './UserAvatar.vue';
 import { vGlow } from '../directives/glow';
 
 const props = defineProps<{
@@ -282,9 +283,7 @@ async function handleLeave() {
           />
           <div v-if="inviteCandidates.length" class="invite-list">
             <div v-for="u in inviteCandidates" :key="u.id" class="invite-row">
-              <span class="avatar avatar-sm" :style="{ background: avatarColor(u.username) }">
-                {{ avatarInitial(u.nickname) }}
-              </span>
+              <UserAvatar :name="u.nickname" :seed="u.username" :src="u.avatar" size="sm" />
               <span class="invite-meta">
                 <strong>{{ u.nickname }}</strong>
                 <small>@{{ u.username }}</small>
@@ -310,11 +309,21 @@ async function handleLeave() {
         </div>
 
         <div class="list-stack">
-          <div v-for="m in store.activeMembers" :key="m.userId" class="info-card member-card">
-            <div class="avatar avatar-sm" :style="{ background: avatarColor(m.username) }">
-              {{ avatarInitial(m.nickname) }}
-              <span v-if="m.online" class="online-dot" />
-            </div>
+          <div
+            v-for="m in store.activeMembers"
+            :key="m.userId"
+            class="info-card member-card clickable-card"
+            title="点击查看资料名片"
+            @click="store.openProfile(m.userId)"
+          >
+            <UserAvatar
+              :name="m.nickname"
+              :seed="m.username"
+              :src="m.avatar"
+              :online="m.online"
+              size="sm"
+              clickable
+            />
             <div class="member-meta">
               <div class="member-name-row">
                 <strong>{{ m.nickname }}</strong>
@@ -322,14 +331,16 @@ async function handleLeave() {
                   <Crown :size="10" /> 群主
                 </span>
               </div>
-              <small>@{{ m.username }} | {{ m.online ? '在线' : '离线' }}</small>
+              <small v-if="m.statusText">{{ m.statusEmoji }} {{ m.statusText }}</small>
+              <small v-else-if="m.signature">{{ m.signature }}</small>
+              <small v-else>@{{ m.username }} | {{ m.online ? '在线' : '离线' }}</small>
             </div>
             <button
               v-if="isOwner && String(m.userId) !== String(store.currentUser?.id)"
               type="button"
               class="btn-icon danger-icon"
               title="移出群聊"
-              @click="handleKick(m.userId, m.nickname)"
+              @click.stop="handleKick(m.userId, m.nickname)"
             >
               <UserMinus :size="13" />
             </button>
@@ -524,6 +535,10 @@ async function handleLeave() {
   flex-direction: row;
   align-items: center;
   gap: 9px;
+}
+
+.clickable-card {
+  cursor: pointer;
 }
 
 .member-meta {

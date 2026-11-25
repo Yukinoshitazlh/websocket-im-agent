@@ -9,7 +9,7 @@ import {
   Users
 } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
-import { avatarColor, avatarInitial } from '../utils/format';
+import UserAvatar from './UserAvatar.vue';
 import { vGlow } from '../directives/glow';
 
 const emit = defineEmits<{
@@ -25,19 +25,29 @@ const totalUnread = computed(() =>
 
 <template>
   <nav v-glow class="nav-rail glass" aria-label="主导航">
-    <!-- 顶部当前用户头像 + 连线状态灯 -->
-    <div
-      class="nav-avatar-wrap"
-      :title="`${store.currentUser?.nickname} (@${store.currentUser?.username}) - ${store.wsStatusText}`"
+    <!-- 顶部当前用户头像（点击编辑个人资料 / 头像 / 签名 / 状态） -->
+    <button
+      type="button"
+      class="nav-avatar-btn"
+      :title="`${store.currentUser?.nickname} (@${store.currentUser?.username}) | 点击编辑个人资料`"
+      @click="store.openProfile()"
     >
-      <div
-        class="avatar nav-avatar"
-        :style="{ background: avatarColor(store.currentUser?.username || 'u') }"
+      <UserAvatar
+        :name="store.currentUser?.nickname || 'U'"
+        :seed="store.currentUser?.username || 'u'"
+        :src="store.currentUser?.avatar"
+        size="lg"
+        clickable
+      />
+      <span
+        v-if="store.currentUser?.statusEmoji"
+        class="nav-status-emoji"
+        :title="store.currentUser.statusText || '当前状态'"
       >
-        {{ avatarInitial(store.currentUser?.nickname || 'U') }}
-        <span class="ws-dot" :class="store.wsState" />
-      </div>
-    </div>
+        {{ store.currentUser.statusEmoji }}
+      </span>
+      <span v-else class="ws-dot" :class="store.wsState" />
+    </button>
 
     <!-- 中部核心入口 -->
     <div class="nav-group">
@@ -111,15 +121,29 @@ const totalUnread = computed(() =>
   z-index: 1;
 }
 
-.nav-avatar-wrap {
-  cursor: default;
+.nav-avatar-btn {
+  position: relative;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
 }
 
-.nav-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 13px;
-  font-size: 15px;
+.nav-status-emoji {
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--surface-strong);
+  border: 1px solid var(--glass-edge);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
 }
 
 .ws-dot {

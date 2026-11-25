@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { CheckCheck, Clock, X } from 'lucide-vue-next';
 import type { ChatMessage, ConversationMember } from '../types/im';
-import { avatarColor, avatarInitial } from '../utils/format';
+import UserAvatar from './UserAvatar.vue';
 
 const props = defineProps<{
   message: ChatMessage;
@@ -53,10 +53,7 @@ const unreadMembers = computed(() =>
           </div>
           <div class="col-list">
             <div v-for="m in readMembers" :key="m.userId" class="person-row">
-              <div class="avatar avatar-sm" :style="{ background: avatarColor(m.username) }">
-                {{ avatarInitial(m.nickname) }}
-                <span v-if="m.online" class="online-dot" />
-              </div>
+              <UserAvatar :name="m.nickname" :seed="m.username" :src="m.avatar" :online="m.online" size="sm" />
               <div class="person-meta">
                 <strong>{{ m.nickname }}</strong>
                 <small class="tabular">已读至 #{{ m.lastReadSeq }}</small>
@@ -73,10 +70,7 @@ const unreadMembers = computed(() =>
           </div>
           <div class="col-list">
             <div v-for="m in unreadMembers" :key="m.userId" class="person-row">
-              <div class="avatar avatar-sm" :style="{ background: avatarColor(m.username) }">
-                {{ avatarInitial(m.nickname) }}
-                <span v-if="m.online" class="online-dot" />
-              </div>
+              <UserAvatar :name="m.nickname" :seed="m.username" :src="m.avatar" :online="m.online" size="sm" />
               <div class="person-meta">
                 <strong>{{ m.nickname }}</strong>
                 <small>{{ m.online ? '在线' : '离线' }}</small>

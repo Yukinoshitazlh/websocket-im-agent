@@ -400,11 +400,13 @@ public class MessageService {
         cacheAck(idempKey, ack);
 
         String senderNickname = userService.getNicknameCached(senderId);
+        String senderAvatar = userService.getAvatarCached(senderId);
         ChatPushPayload pushPayload = ChatPushPayload.builder()
                 .msgId(savedMessage.getId())
                 .conversationId(convId)
                 .senderId(senderId)
                 .senderNickname(senderNickname)
+                .senderAvatar(senderAvatar)
                 .clientMsgId(clientMsgId)
                 .seq(savedMessage.getSeq())
                 .msgType(savedMessage.getMsgType())
@@ -621,26 +623,29 @@ public class MessageService {
                 .collect(Collectors.toMap(ImMessage::getId, m -> m, (a, b) -> a));
         replyMap.values().forEach(r -> userIds.add(r.getSenderId()));
 
-        Map<Long, String> nicknameMap = userIds.isEmpty()
+        Map<Long, ImUser> userMap = userIds.isEmpty()
                 ? Collections.emptyMap()
                 : userMapper.selectBatchIds(userIds).stream()
-                .collect(Collectors.toMap(ImUser::getId, ImUser::getNickname, (a, b) -> a));
+                .collect(Collectors.toMap(ImUser::getId, u -> u, (a, b) -> a));
 
         Map<Long, List<ReactionGroupVO>> reactionMap = collabService.loadReactionsMap(msgIds, currentUserId);
 
         return messages.stream().map(m -> {
             ImMessage replied = m.getReplyToMsgId() != null ? replyMap.get(m.getReplyToMsgId()) : null;
+            ImUser replyUser = replied != null ? userMap.get(replied.getSenderId()) : null;
             String replySender = replied != null
-                    ? nicknameMap.getOrDefault(replied.getSenderId(), "用户" + replied.getSenderId())
+                    ? (replyUser != null ? replyUser.getNickname() : "用户" + replied.getSenderId())
                     : null;
             String replyContent = replied != null
                     ? (Integer.valueOf(2).equals(replied.getStatus()) ? "已撤回一条消息" : buildPreview(replied.getMsgType(), replied.getContent()))
                     : null;
+            ImUser sender = userMap.get(m.getSenderId());
             return MessageVO.builder()
                     .id(m.getId())
                     .conversationId(m.getConversationId())
                     .senderId(m.getSenderId())
-                    .senderNickname(nicknameMap.getOrDefault(m.getSenderId(), "用户" + m.getSenderId()))
+                    .senderNickname(sender != null ? sender.getNickname() : "用户" + m.getSenderId())
+                    .senderAvatar(sender != null ? sender.getAvatar() : "")
                     .clientMsgId(m.getClientMsgId())
                     .seq(m.getSeq())
                     .msgType(m.getMsgType())
