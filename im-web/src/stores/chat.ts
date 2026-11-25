@@ -37,6 +37,7 @@ export const useChatStore = defineStore('chat', () => {
   );
   const wsUrl = ref<string>(sessionStorage.getItem('im_ws_url') || 'ws://127.0.0.1:9001/ws');
   const theme = ref<'light' | 'dark'>((localStorage.getItem('im_theme') as 'light' | 'dark') || 'light');
+  const demoMode = ref<boolean>(localStorage.getItem('im_demo_mode') === '1');
 
   const wsState = ref<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const wsStatusText = ref<string>('未连接');
@@ -62,6 +63,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // 飞书 & 微信高阶协作状态
   const unreadDigestBanner = ref<UnreadDigestState | null>(null);
+  const unreadStartSeq = ref<number | null>(null);
   const mentionJumpSeq = ref<number | null>(null);
   const highlightedSeq = ref<number | null>(null);
   const multiSelectMode = ref<boolean>(false);
@@ -146,6 +148,16 @@ export const useChatStore = defineStore('chat', () => {
 
   function toggleTheme() {
     applyTheme(theme.value === 'light' ? 'dark' : 'light');
+  }
+
+  function toggleDemoMode() {
+    demoMode.value = !demoMode.value;
+    localStorage.setItem('im_demo_mode', demoMode.value ? '1' : '0');
+    pushToast(
+      demoMode.value
+        ? '已开启面试演练模式：显示双网关切换、断网模拟、#seq 与幂等重发'
+        : '已切回日常纯净模式'
+    );
   }
 
   function pushToast(text: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -509,7 +521,12 @@ export const useChatStore = defineStore('chat', () => {
   async function selectConversation(convId: string) {
     const targetConv = conversations.value.find((c) => c.id === convId);
 
-    // 捕获进入会话前的未读快照（满 3 条弹出飞书式 AI 一键省流总结胶囊）与被 @ 定位水位
+    // 捕获进入会话前的未读快照（满 3 条弹出飞书式 AI 一键省流总结胶囊）与「以下是新消息」分割水位
+    if (targetConv && targetConv.unreadCount > 0) {
+      unreadStartSeq.value = targetConv.lastReadSeq || 0;
+    } else {
+      unreadStartSeq.value = null;
+    }
     if (targetConv && targetConv.unreadCount >= 3) {
       unreadDigestBanner.value = {
         conversationId: convId,
@@ -1244,6 +1261,7 @@ export const useChatStore = defineStore('chat', () => {
     currentUser,
     wsUrl,
     theme,
+    demoMode,
     wsState,
     wsStatusText,
     wsRttMs,
@@ -1265,6 +1283,7 @@ export const useChatStore = defineStore('chat', () => {
     searchResults,
     searchLoading,
     unreadDigestBanner,
+    unreadStartSeq,
     mentionJumpSeq,
     highlightedSeq,
     multiSelectMode,
@@ -1277,6 +1296,7 @@ export const useChatStore = defineStore('chat', () => {
     toasts,
     lightboxUrl,
     toggleTheme,
+    toggleDemoMode,
     pushToast,
     flashHighlightSeq,
     setDraft,

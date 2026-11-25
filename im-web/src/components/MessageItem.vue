@@ -3,15 +3,12 @@ import { computed } from 'vue';
 import {
   Bell,
   Check,
-  CheckSquare,
-  Copy,
   Download,
   FileText,
   MessageSquareText,
-  Pin,
+  MoreHorizontal,
   Reply,
-  Sparkles,
-  Undo2
+  Sparkles
 } from 'lucide-vue-next';
 import type { ChatMessage, ConversationMember, ForwardBundleMeta } from '../types/im';
 import {
@@ -24,13 +21,14 @@ import {
 } from '../utils/format';
 import { renderMarkdownSafe } from '../utils/markdown';
 
-const QUICK_EMOJIS = ['👍', '🔥', '🎉', '❤️', '😂', '👌'];
+const SLIM_EMOJIS = ['👍', '❤️', '🔥'];
 
 const props = defineProps<{
   message: ChatMessage;
   isMine: boolean;
+  isGroup: boolean;
+  demoMode: boolean;
   grouped: boolean;
-  nowMs: number;
   members: ConversationMember[];
   multiSelect: boolean;
   selected: boolean;
@@ -39,13 +37,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'reply', msg: ChatMessage): void;
-  (e: 'recall', msgId: string): void;
   (e: 'react', msgId: string, emoji: string): void;
-  (e: 'pin', msgId: string): void;
+  (e: 'open-context-menu', ev: MouseEvent, msg: ChatMessage): void;
   (e: 'toggle-select', msgId: string): void;
-  (e: 'enter-multi-select', msgId: string): void;
   (e: 'open-read-detail', msg: ChatMessage): void;
   (e: 'open-bundle', meta: ForwardBundleMeta): void;
+  (e: 'jump-to-msg-id', msgId: string): void;
   (e: 'preview-image', url: string): void;
   (e: 'copied', text: string): void;
 }>();
@@ -59,17 +56,19 @@ const bundleMeta = computed(() =>
   props.message.msgType === 'FORWARD_BUNDLE' ? parseForwardBundle(props.message.extra) : null
 );
 
-const canRecall = computed(() => {
-  if (!props.isMine || isRecalled.value || !props.message.id) return false;
-  if (props.message.msgType === 'REMINDER' || props.message.msgType === 'SYSTEM') return false;
-  return props.nowMs - props.message.createdAt < 120_000;
+// 微信/飞书节奏：单聊日常模式隐藏重复昵称，群聊/AI/演练模式才显示头部信息
+const showMetaHeader = computed(() => {
+  if (props.grouped) return false;
+  if (props.demoMode) return true;
+  if (isAi.value) return true;
+  return props.isGroup && !props.isMine;
 });
 
 const renderedMarkdown = computed(() =>
   isAi.value ? renderMarkdownSafe(props.message.content) : ''
 );
 
-// 飞书零写放大已读进度环计算（直接比对成员 lastReadSeq >= message.seq）
+// 飞书零写放大已读进度环计算
 const readStats = computed(() => {
   if (!props.isMine || props.message.seq <= 0 || isRecalled.value || isSystem.value) {
     return null;
@@ -84,18 +83,9 @@ const readStats = computed(() => {
     total,
     allRead: readCount >= total,
     ratio,
-    dashOffset: 37.7 * (1 - ratio) // 圆周长 2 * pi * 6 = 37.7
+    dashOffset: 37.7 * (1 - ratio)
   };
 });
-
-async function copyMessageText() {
-  try {
-    await navigator.clipboard.writeText(props.message.content);
-    emit('copied', '消息内容已复制');
-  } catch {
-    emit('copied', '复制失败，请检查浏览器剪贴板权限');
-  }
-}
 
 async function handleMarkdownClick(ev: MouseEvent) {
   const target = ev.target as HTMLElement | null;
@@ -121,10 +111,16 @@ function handleRowClick() {
     emit('toggle-select', props.message.id);
   }
 }
+
+function handleContextMenu(ev: MouseEvent) {
+  if (props.multiSelect || isRecalled.value || isSystem.value || !props.message.id) return;
+  ev.preventDefault();
+  emit('open-context-menu', ev, props.message);
+}
 </script>
 
 <template>
-  <!-- 系统灰条消息（拉人/踢人/改群名/退群） -->
+  <!-- 系统灰条消息 -->
   <div v-if="isSystem" class="recalled-row" :data-msg-seq="message.seq">
     <span class="recalled-pill system-pill">{{ message.content }}</span>
   </div>
@@ -140,12 +136,13 @@ function handleRowClick() {
     class="reminder-row"
     :class="{ highlighted }"
     :data-msg-seq="message.seq"
+    :data-msg-id="message.id"
   >
     <div class="reminder-card">
       <div class="reminder-head">
         <Bell :size="14" />
         <span>群日程定时提醒</span>
-        <span class="reminder-seq tabular">#{{ message.seq }}</span>
+        <span v-if="demoMode" class="reminder-seq tabular">#{{ message.seq }}</span>
         <span class="reminder-time tabular">{{ formatTimeShort(message.createdAt) }}</span>
       </div>
       <div class="reminder-body">{{ message.content }}</div>
@@ -158,6 +155,7 @@ function handleRowClick() {
     class="msg-row"
     :class="{ mine: isMine, grouped, selectable: multiSelect, selected, highlighted }"
     :data-msg-seq="message.seq"
+    :data-msg-id="message.id"
     @click="handleRowClick"
   >
     <!-- 多选勾选框 -->
@@ -180,12 +178,11 @@ function handleRowClick() {
     </div>
 
     <div class="msg-col">
-      <div v-if="!grouped" class="msg-meta">
+      <div v-if="showMetaHeader" class="msg-meta">
         <span class="sender-name">{{ message.senderNickname }}</span>
-        <span v-if="isAi" class="ai-badge">AI Agent</span>
-        <span class="meta-time tabular">{{ formatTimeShort(message.createdAt) }}</span>
-        <span v-if="message.seq > 0" class="meta-seq tabular">#{{ message.seq }}</span>
-        <span v-else-if="message.localStatus === 'sending'" class="meta-sending">发送中...</span>
+        <span v-if="isAi" class="ai-badge">AI</span>
+        <span v-if="demoMode && message.seq > 0" class="meta-seq tabular">#{{ message.seq }}</span>
+        <span v-if="message.localStatus === 'sending'" class="meta-sending">发送中...</span>
         <span v-if="message.localStatus === 'aborted'" class="meta-aborted">已中止</span>
       </div>
 
@@ -198,12 +195,20 @@ function handleRowClick() {
             'bubble-media': message.msgType === 'IMAGE',
             'bubble-bundle': message.msgType === 'FORWARD_BUNDLE'
           }"
+          :title="formatTimeShort(message.createdAt)"
+          @contextmenu="handleContextMenu"
         >
-          <!-- 引用回复摘要 -->
-          <div v-if="message.replyToContent" class="quote-box">
+          <!-- 引用回复摘要（点击可平滑回跳原文并高亮） -->
+          <button
+            v-if="message.replyToContent"
+            type="button"
+            class="quote-box"
+            title="点击定位到被引用的原消息"
+            @click.stop="message.replyToMsgId && emit('jump-to-msg-id', message.replyToMsgId)"
+          >
             <span class="quote-author">{{ message.replyToSender || '引用消息' }}</span>
             <span class="quote-text">{{ message.replyToContent }}</span>
-          </div>
+          </button>
 
           <!-- 微信式合并转发 [聊天记录] 卡片 -->
           <div
@@ -234,7 +239,7 @@ function handleRowClick() {
               loading="lazy"
               @click.stop="emit('preview-image', fileMeta?.url || message.content)"
             />
-            <div v-if="fileMeta?.instantHit" class="media-tag">SHA-256 秒传</div>
+            <div v-if="demoMode && fileMeta?.instantHit" class="media-tag">SHA-256 秒传</div>
           </div>
 
           <!-- 文件消息 -->
@@ -254,8 +259,8 @@ function handleRowClick() {
               <div class="file-name">{{ fileMeta?.fileName || message.content }}</div>
               <div class="file-sub">
                 <span>{{ formatFileSize(fileMeta?.fileSize) }}</span>
-                <span v-if="fileMeta?.storageType">{{ fileMeta.storageType }}</span>
-                <span v-if="fileMeta?.instantHit" class="instant-flag">秒传</span>
+                <span v-if="demoMode && fileMeta?.storageType">{{ fileMeta.storageType }}</span>
+                <span v-if="demoMode && fileMeta?.instantHit" class="instant-flag">秒传</span>
               </div>
             </div>
             <Download :size="16" class="file-dl" />
@@ -273,7 +278,7 @@ function handleRowClick() {
           <div v-else class="text-body">{{ message.content }}</div>
         </div>
 
-        <!-- 飞书已读进度圆环（点击查看谁已读 / 谁未读） -->
+        <!-- 飞书已读进度圆环 -->
         <button
           v-if="readStats && !multiSelect"
           type="button"
@@ -281,7 +286,7 @@ function handleRowClick() {
           :class="{ all: readStats.allRead }"
           :title="
             readStats.allRead
-              ? (readStats.total === 1 ? '对方已读（点击查看详情）' : `全部已读 ${readStats.readCount}/${readStats.total}（点击查看详情）`)
+              ? (readStats.total === 1 ? '对方已读（点击查看详情）' : `全部已读 ${readStats.readCount}/${readStats.total}`)
               : (readStats.total === 1 ? '对方未读' : `${readStats.readCount}/${readStats.total} 人已读（点击查看明细）`)
           "
           @click.stop="emit('open-read-detail', message)"
@@ -306,46 +311,34 @@ function handleRowClick() {
           </svg>
         </button>
 
-        <!-- 悬浮液态玻璃操作条（快速表情表态 + 复制/引用/置顶/多选/撤回） -->
+        <!-- 悬停显示精确时间（单聊清爽模式下的温和提示） -->
+        <span v-if="!multiSelect && !showMetaHeader" class="hover-time tabular">
+          {{ formatTimeShort(message.createdAt) }}
+        </span>
+
+        <!-- 精简悬浮浮条（仅 3 个高频表情 + 回复 + 更多；右键亦可呼出完整菜单） -->
         <div v-if="!multiSelect && message.id" class="hover-actions" @click.stop>
-          <div class="emoji-strip">
-            <button
-              v-for="emo in QUICK_EMOJIS"
-              :key="emo"
-              type="button"
-              class="emoji-btn"
-              :title="`表态 ${emo}`"
-              @click="emit('react', message.id, emo)"
-            >
-              {{ emo }}
-            </button>
-          </div>
-          <span class="action-sep" />
-          <button type="button" class="action-btn" title="复制" @click="copyMessageText">
-            <Copy :size="13" />
+          <button
+            v-for="emo in SLIM_EMOJIS"
+            :key="emo"
+            type="button"
+            class="emoji-btn"
+            :title="`表态 ${emo}`"
+            @click="emit('react', message.id, emo)"
+          >
+            {{ emo }}
           </button>
+          <span class="action-sep" />
           <button type="button" class="action-btn" title="引用回复" @click="emit('reply', message)">
             <Reply :size="13" />
-          </button>
-          <button type="button" class="action-btn" title="置顶到会话公告栏" @click="emit('pin', message.id)">
-            <Pin :size="13" />
           </button>
           <button
             type="button"
             class="action-btn"
-            title="多选（合并转发 / 交给 AI 提炼）"
-            @click="emit('enter-multi-select', message.id)"
+            title="更多操作（复制 / 置顶 / 多选 / 撤回）"
+            @click="emit('open-context-menu', $event, message)"
           >
-            <CheckSquare :size="13" />
-          </button>
-          <button
-            v-if="canRecall"
-            type="button"
-            class="action-btn danger"
-            title="撤回消息（2分钟内）"
-            @click="emit('recall', message.id)"
-          >
-            <Undo2 :size="13" />
+            <MoreHorizontal :size="14" />
           </button>
         </div>
       </div>
@@ -479,8 +472,8 @@ function handleRowClick() {
 .msg-row {
   display: flex;
   gap: 10px;
-  margin-top: 14px;
-  padding: 4px 6px;
+  margin-top: 12px;
+  padding: 3px 6px;
   border-radius: 16px;
   align-items: flex-start;
   transform-origin: left bottom;
@@ -489,7 +482,7 @@ function handleRowClick() {
 }
 
 .msg-row.grouped {
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .msg-row.mine {
@@ -555,7 +548,7 @@ function handleRowClick() {
   max-width: min(76%, 660px);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   align-items: flex-start;
 }
 
@@ -582,12 +575,12 @@ function handleRowClick() {
 }
 
 .ai-badge {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
   background: var(--ai-soft);
   color: var(--ai);
   border: 1px solid var(--ai-border);
-  padding: 0 6px;
+  padding: 0 5px;
   border-radius: 4px;
 }
 
@@ -697,6 +690,11 @@ function handleRowClick() {
 }
 
 .quote-box {
+  width: 100%;
+  border: none;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -706,21 +704,30 @@ function handleRowClick() {
   background: rgba(23, 27, 38, 0.05);
   border-radius: 0 8px 8px 0;
   font-size: 12px;
+  transition: background 0.18s;
+}
+
+.quote-box:hover {
+  background: rgba(23, 27, 38, 0.1);
 }
 
 .bubble-mine .quote-box {
-  border-left-color: rgba(255, 255, 255, 0.75);
+  border-left-color: rgba(255, 255, 255, 0.78);
   background: rgba(255, 255, 255, 0.16);
+}
+
+.bubble-mine .quote-box:hover {
+  background: rgba(255, 255, 255, 0.24);
 }
 
 .quote-author {
   font-weight: 700;
   font-size: 11px;
-  opacity: 0.85;
+  opacity: 0.88;
 }
 
 .quote-text {
-  opacity: 0.85;
+  opacity: 0.86;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -818,10 +825,9 @@ function handleRowClick() {
   opacity: 0.8;
 }
 
-/* 飞书已读进度圆环 */
 .read-ring-btn {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: none;
   background: transparent;
   padding: 0;
@@ -866,10 +872,23 @@ function handleRowClick() {
   stroke-linejoin: round;
 }
 
-/* 悬浮液态操作条 */
+.hover-time {
+  font-size: 10.5px;
+  color: var(--ink-muted);
+  opacity: 0;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.msg-row:hover .hover-time {
+  opacity: 0.85;
+}
+
+/* 精简悬浮浮条 */
 .hover-actions {
   position: absolute;
-  top: -36px;
+  top: -34px;
   left: 0;
   z-index: 15;
   display: flex;
@@ -883,9 +902,9 @@ function handleRowClick() {
   -webkit-backdrop-filter: blur(18px) saturate(190%);
   backdrop-filter: blur(18px) saturate(190%);
   opacity: 0;
-  transform: scale(0.88) translateY(6px);
+  transform: scale(0.88) translateY(5px);
   pointer-events: none;
-  transition: opacity 0.2s var(--ease-out), transform 0.35s var(--ease-spring);
+  transition: opacity 0.18s var(--ease-out), transform 0.32s var(--ease-spring);
 }
 
 .msg-row.mine .hover-actions {
@@ -897,12 +916,6 @@ function handleRowClick() {
   opacity: 1;
   transform: none;
   pointer-events: auto;
-}
-
-.emoji-strip {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
 }
 
 .emoji-btn {
@@ -920,15 +933,15 @@ function handleRowClick() {
 }
 
 .emoji-btn:hover {
-  transform: scale(1.28);
+  transform: scale(1.26);
   background: var(--hover);
 }
 
 .action-sep {
   width: 1px;
-  height: 15px;
+  height: 14px;
   background: var(--border-strong);
-  margin: 0 3px;
+  margin: 0 2px;
 }
 
 .action-btn {
@@ -951,12 +964,6 @@ function handleRowClick() {
   transform: scale(1.12);
 }
 
-.action-btn.danger:hover {
-  color: var(--danger);
-  background: rgba(224, 49, 59, 0.12);
-}
-
-/* 表情表态聚合胶囊 */
 .reaction-bar {
   display: flex;
   flex-wrap: wrap;

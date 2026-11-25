@@ -3,19 +3,26 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   ArrowDown,
   AtSign,
+  CheckSquare,
+  Copy,
+  FileText,
   Forward,
   Loader2,
-  PanelRight,
   Paperclip,
   Pin,
+  Reply,
+  Search,
   Send,
+  Smile,
   Sparkles,
+  Undo2,
   Upload,
   Users,
   X
 } from 'lucide-vue-next';
 import { useChatStore } from './stores/chat';
 import AuthView from './components/AuthView.vue';
+import NavRail from './components/NavRail.vue';
 import SidebarRail from './components/SidebarRail.vue';
 import MessageItem from './components/MessageItem.vue';
 import AgentStreamCard from './components/AgentStreamCard.vue';
@@ -26,7 +33,7 @@ import ReadDetailModal from './components/ReadDetailModal.vue';
 import ForwardModal from './components/ForwardModal.vue';
 import BundleViewerModal from './components/BundleViewerModal.vue';
 import type { ChatMessage } from './types/im';
-import { avatarColor, avatarInitial, formatDateDivider } from './utils/format';
+import { avatarColor, avatarInitial, formatDateDivider, formatFileSize } from './utils/format';
 
 interface MentionOption {
   id: string;
@@ -38,15 +45,40 @@ interface MentionOption {
   online?: boolean;
 }
 
+interface PendingFile {
+  id: string;
+  file: File;
+  isImage: boolean;
+  previewUrl?: string;
+}
+
+const CONTEXT_EMOJIS = ['👍', '🔥', '🎉', '❤️', '😂', '👌'];
+const PICKER_EMOJIS = [
+  '😀', '😂', '🤣', '😅', '😊', '😍', '🥰', '😎',
+  '🤔', '😮', '😭', '😡', '🥳', '🤯', '😴', '🫡',
+  '👍', '👎', '👌', '👏', '🙏', '🤝', '💪', '🎉',
+  '🔥', '✨', '❤️', '💯', '🚀', '📌', '✅', '❌',
+  '⚡', '💡', '📅', '📝', '💻', '🐛', '☕', '🧋'
+];
+
 const store = useChatStore();
 
-const showInspector = ref(true);
+// 日常模式下右侧抽屉默认收起，回归宽敞双栏；点击顶栏功能图标随时滑出对应 Tab
+const showInspector = ref(false);
+const currentDrawerTab = ref<'metrics' | 'group' | 'search'>('metrics');
 const inspectorTabReq = ref<'metrics' | 'group' | 'search' | undefined>(undefined);
+
 const showGroupModal = ref(false);
 const showForwardModal = ref(false);
 const showAllPins = ref(false);
+const showEmojiPicker = ref(false);
+const showAiMenu = ref(false);
+
+// 全局消息右键/更多菜单
+const msgMenu = ref<{ msg: ChatMessage; x: number; y: number } | null>(null);
 
 const draft = ref('');
+const pendingFiles = ref<PendingFile[]>([]);
 const pendingAtIds = ref<string[]>([]);
 const mentionOpen = ref(false);
 const mentionFilter = ref('');
@@ -64,16 +96,26 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null);
 let clockTimer: number | null = null;
 let dragDepth = 0;
 
+function closeFloatingMenus() {
+  msgMenu.value = null;
+  showEmojiPicker.value = false;
+  showAiMenu.value = false;
+  showAllPins.value = false;
+}
+
 onMounted(() => {
   clockTimer = window.setInterval(() => {
     nowMs.value = Date.now();
   }, 5000);
   window.addEventListener('keydown', onGlobalKeyDown);
+  window.addEventListener('click', closeFloatingMenus);
 });
 
 onUnmounted(() => {
   if (clockTimer) window.clearInterval(clockTimer);
   window.removeEventListener('keydown', onGlobalKeyDown);
+  window.removeEventListener('click', closeFloatingMenus);
+  clearPendingFiles();
 });
 
 function onGlobalKeyDown(e: KeyboardEvent) {
@@ -82,21 +124,31 @@ function onGlobalKeyDown(e: KeyboardEvent) {
     else if (store.viewingBundle) store.viewingBundle = null;
     else if (store.readDetailMsg) store.readDetailMsg = null;
     else if (showForwardModal.value) showForwardModal.value = false;
-    else if (mentionOpen.value) mentionOpen.value = false;
+    else if (msgMenu.value || showEmojiPicker.value || showAiMenu.value || showAllPins.value) {
+      closeFloatingMenus();
+    } else if (mentionOpen.value) mentionOpen.value = false;
     else if (store.multiSelectMode) store.exitMultiSelect();
   }
 }
 
 const latestPin = computed(() => store.activePins[0] || null);
 
-// 构建 @ 联想候选列表（@AI 助手 + @所有人 + 会话成员）
+// 第一条未读消息的下标，用于展示「以下是新消息」分割线
+const firstUnreadIndex = computed(() => {
+  if (store.unreadStartSeq === null) return -1;
+  const threshold = store.unreadStartSeq;
+  return store.messages.findIndex((m) => m.seq > threshold);
+});
+
+const canSendComposer = computed(() => draft.value.trim().length > 0 || pendingFiles.value.length > 0);
+
 const mentionOptions = computed<MentionOption[]>(() => {
   const list: MentionOption[] = [
     {
       id: 'AI',
       label: 'AI 助手',
       insertText: '@AI ',
-      sub: '智能总结 / 延迟提醒 / 问答',
+      sub: '智能总结 / 定时提醒 / 问答',
       isAi: true,
       online: true
     }
@@ -129,12 +181,41 @@ const mentionOptions = computed<MentionOption[]>(() => {
   );
 });
 
-function openGroupManageTab() {
+function toggleDrawerTab(tab: 'metrics' | 'group' | 'search') {
+  if (showInspector.value && currentDrawerTab.value === tab) {
+    showInspector.value = false;
+    return;
+  }
+  currentDrawerTab.value = tab;
   showInspector.value = true;
-  inspectorTabReq.value = 'group';
+  inspectorTabReq.value = tab;
   nextTick(() => {
     inspectorTabReq.value = undefined;
   });
+}
+
+function openMsgContextMenu(ev: MouseEvent, msg: ChatMessage) {
+  showEmojiPicker.value = false;
+  showAiMenu.value = false;
+  const x = Math.min(ev.clientX, window.innerWidth - 224);
+  const y = Math.min(ev.clientY, window.innerHeight - 250);
+  msgMenu.value = { msg, x: Math.max(12, x), y: Math.max(12, y) };
+}
+
+function canRecallMsg(msg: ChatMessage): boolean {
+  if (!store.currentUser || !msg.id) return false;
+  if (String(msg.senderId) !== String(store.currentUser.id)) return false;
+  if (msg.status === 2 || msg.msgType === 'REMINDER' || msg.msgType === 'SYSTEM') return false;
+  return nowMs.value - msg.createdAt < 120_000;
+}
+
+async function copyMessageContent(msg: ChatMessage) {
+  try {
+    await navigator.clipboard.writeText(msg.content);
+    store.pushToast('已复制到剪贴板');
+  } catch {
+    store.pushToast('复制失败，请检查剪贴板权限', 'error');
+  }
 }
 
 function shouldShowDivider(index: number): boolean {
@@ -168,7 +249,6 @@ function scrollToBottom(smooth = false) {
 async function jumpToSeq(seq: number) {
   if (!seq || seq <= 0) return;
   showAllPins.value = false;
-  // 若目标 seq 尚未拉取到内存，最多向前翻 3 页补齐
   for (let i = 0; i < 3; i++) {
     const exists = store.messages.some((m) => m.seq === seq);
     if (exists || !store.hasMoreHistory) break;
@@ -184,8 +264,22 @@ async function jumpToSeq(seq: number) {
       store.mentionJumpSeq = null;
     }
   } else {
-    store.pushToast(`未在近期记录中找到 #${seq}，请继续上拉加载更早历史`);
+    store.pushToast('目标消息较早，请继续向上滚动加载历史');
   }
+}
+
+async function jumpToMsgId(msgId: string) {
+  if (!msgId) return;
+  for (let i = 0; i < 3; i++) {
+    const found = store.messages.find((m) => String(m.id) === String(msgId));
+    if (found) {
+      await jumpToSeq(found.seq);
+      return;
+    }
+    if (!store.hasMoreHistory) break;
+    await store.loadOlderMessages();
+  }
+  store.pushToast('被引用的原消息较早，请向上滚动加载更多历史');
 }
 
 async function handleScroll() {
@@ -211,7 +305,7 @@ async function triggerLoadOlder() {
   }
 }
 
-// 切换会话时自动保存旧草稿、恢复新草稿并滚动到底部
+// 切换会话：保存旧草稿 -> 恢复新草稿 -> 自动聚焦输入框（微信肌肉记忆）
 watch(
   () => store.activeConvId,
   (nextId, prevId) => {
@@ -219,10 +313,14 @@ watch(
       store.setDraft(prevId, draft.value);
     }
     draft.value = nextId ? store.getDraft(nextId) : '';
+    clearPendingFiles();
     pendingAtIds.value = [];
     mentionOpen.value = false;
-    showAllPins.value = false;
-    nextTick(adjustTextarea);
+    closeFloatingMenus();
+    nextTick(() => {
+      adjustTextarea();
+      if (nextId) textareaRef.value?.focus();
+    });
     scrollToBottom(false);
   }
 );
@@ -296,6 +394,53 @@ function selectMentionOption(opt: MentionOption) {
   });
 }
 
+function insertEmoji(emoji: string) {
+  const el = textareaRef.value;
+  const start = el ? el.selectionStart : draft.value.length;
+  const end = el ? el.selectionEnd : draft.value.length;
+  draft.value = draft.value.slice(0, start) + emoji + draft.value.slice(end);
+  if (store.activeConvId) {
+    store.setDraft(store.activeConvId, draft.value);
+  }
+  showEmojiPicker.value = false;
+  nextTick(() => {
+    adjustTextarea();
+    const pos = start + emoji.length;
+    el?.focus();
+    el?.setSelectionRange(pos, pos);
+  });
+}
+
+function stageFilesForConfirm(files: File[]) {
+  for (const file of files) {
+    if (file.size > 20 * 1024 * 1024) {
+      store.pushToast(`「${file.name}」超过 20MB 限制`, 'error');
+      continue;
+    }
+    const isImage = file.type.startsWith('image/');
+    pendingFiles.value.push({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      file,
+      isImage,
+      previewUrl: isImage ? URL.createObjectURL(file) : undefined
+    });
+  }
+  nextTick(() => textareaRef.value?.focus());
+}
+
+function removePendingFile(id: string) {
+  const target = pendingFiles.value.find((f) => f.id === id);
+  if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+  pendingFiles.value = pendingFiles.value.filter((f) => f.id !== id);
+}
+
+function clearPendingFiles() {
+  for (const item of pendingFiles.value) {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  }
+  pendingFiles.value = [];
+}
+
 function handleComposerInput() {
   adjustTextarea();
   updateMentionTrigger();
@@ -307,21 +452,33 @@ function handleComposerInput() {
   }
 }
 
-function handleSend(duplicateTest = false) {
+async function handleSend(duplicateTest = false) {
+  const filesToSend = [...pendingFiles.value];
   const text = draft.value.trim();
-  if (!text) return;
-  const atIds = [...pendingAtIds.value];
-  if (text.includes('@所有人') && !atIds.includes('ALL')) {
-    atIds.push('ALL');
+  if (filesToSend.length === 0 && !text) return;
+
+  if (filesToSend.length > 0) {
+    clearPendingFiles();
+    for (const item of filesToSend) {
+      await store.sendFileMessage(item.file);
+    }
   }
-  const ok = store.sendChatMessage(text, { atUserIds: atIds, duplicateTest });
-  if (ok) {
-    draft.value = '';
-    pendingAtIds.value = [];
-    mentionOpen.value = false;
-    nextTick(adjustTextarea);
-    scrollToBottom(true);
+
+  if (text) {
+    const atIds = [...pendingAtIds.value];
+    if (text.includes('@所有人') && !atIds.includes('ALL')) {
+      atIds.push('ALL');
+    }
+    const ok = store.sendChatMessage(text, { atUserIds: atIds, duplicateTest });
+    if (ok) {
+      draft.value = '';
+      pendingAtIds.value = [];
+      mentionOpen.value = false;
+      nextTick(adjustTextarea);
+    }
   }
+  store.unreadStartSeq = null;
+  scrollToBottom(true);
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -354,7 +511,8 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-function handleQuickDemo(preset: string, sendNow = false, duplicateTest = false) {
+function handleQuickAction(preset: string, sendNow = false, duplicateTest = false) {
+  showAiMenu.value = false;
   draft.value = preset;
   nextTick(adjustTextarea);
   if (sendNow) {
@@ -368,28 +526,28 @@ function triggerFilePick() {
   fileInputRef.value?.click();
 }
 
-async function handleFileChange(e: Event) {
+function handleFileChange(e: Event) {
   const input = e.target as HTMLInputElement;
   const files = input.files;
   if (!files?.length) return;
-  for (const f of Array.from(files)) {
-    await store.sendFileMessage(f);
-  }
+  stageFilesForConfirm(Array.from(files));
   input.value = '';
 }
 
-async function handlePaste(e: ClipboardEvent) {
+// 微信同款：Ctrl+V 贴图/粘贴文件先进待发预览区确认，按 Enter 发送，防止误发！
+function handlePaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items;
   if (!items) return;
+  const pastedFiles: File[] = [];
   for (const item of Array.from(items)) {
     if (item.kind === 'file') {
       const file = item.getAsFile();
-      if (file) {
-        e.preventDefault();
-        await store.sendFileMessage(file);
-        return;
-      }
+      if (file) pastedFiles.push(file);
     }
+  }
+  if (pastedFiles.length > 0) {
+    e.preventDefault();
+    stageFilesForConfirm(pastedFiles);
   }
 }
 
@@ -411,15 +569,13 @@ function onDragOver(e: DragEvent) {
   e.preventDefault();
 }
 
-async function onDrop(e: DragEvent) {
+function onDrop(e: DragEvent) {
   e.preventDefault();
   dragDepth = 0;
   dragActive.value = false;
   const files = e.dataTransfer?.files;
   if (!files?.length) return;
-  for (const f of Array.from(files)) {
-    await store.sendFileMessage(f);
-  }
+  stageFilesForConfirm(Array.from(files));
 }
 
 function setReplyTarget(msg: ChatMessage) {
@@ -459,8 +615,9 @@ function handleAiSummarizeSelected() {
     <!-- 未登录 -->
     <AuthView v-if="!store.token || !store.currentUser" key="auth" />
 
-    <!-- 主工作台 -->
+    <!-- 主工作台（58px 极简导航竖条 + 276px 会话栏 + 宽敞主聊天区 + 按需滑出右侧抽屉） -->
     <div v-else key="workbench" class="workbench">
+      <NavRail @open-group-modal="showGroupModal = true" />
       <SidebarRail @open-group-modal="showGroupModal = true" />
 
       <main
@@ -475,13 +632,13 @@ function handleAiSummarizeSelected() {
           <div v-if="dragActive" class="drop-overlay">
             <div class="drop-box">
               <Upload :size="34" class="drop-icon" />
-              <div>释放文件立即上传并发送</div>
-              <small>支持图片与文档（最大 20MB，自动执行 WebCrypto SHA-256 秒传校验）</small>
+              <div>释放文件加入待发送区</div>
+              <small>支持图片与文档（最大 20MB，确认后按 Enter 发送）</small>
             </div>
           </div>
         </Transition>
 
-        <!-- 顶栏 -->
+        <!-- 顶栏（极简微信/飞书风格：搜索 / 群管理 / AI 助手按需滑出右侧抽屉） -->
         <header class="chat-header">
           <div class="header-left">
             <template v-if="store.activeConversation">
@@ -502,11 +659,11 @@ function handleAiSummarizeSelected() {
                 v-else
                 type="button"
                 class="type-pill clickable"
-                title="点击打开群成员管理"
-                @click="openGroupManageTab"
+                title="查看和管理群成员"
+                @click="toggleDrawerTab('group')"
               >
                 <Users :size="12" />
-                <span>群聊 ({{ store.activeMembers.length || store.activeConversation.memberCount || 2 }})</span>
+                <span>{{ store.activeMembers.length || store.activeConversation.memberCount || 2 }}</span>
               </button>
               <Transition name="slide-up">
                 <span v-if="store.typingHint" class="typing-pill">
@@ -515,23 +672,49 @@ function handleAiSummarizeSelected() {
                 </span>
               </Transition>
             </template>
-            <h2 v-else class="conv-heading muted">请选择左侧会话</h2>
+            <h2 v-else class="conv-heading muted">PulseIM</h2>
           </div>
 
-          <div class="header-right">
+          <div v-if="store.activeConversation" class="header-right">
             <Transition name="fade" mode="out-in">
-              <span v-if="store.syncNotice" :key="store.syncNotice" class="sync-pill liquid-lens tabular">
+              <span
+                v-if="store.syncNotice && (store.demoMode || store.syncNotice.includes('补齐'))"
+                :key="store.syncNotice"
+                class="sync-pill liquid-lens tabular"
+              >
                 {{ store.syncNotice }}
               </span>
             </Transition>
+
             <button
               type="button"
               class="btn-icon"
-              :class="{ 'is-active': showInspector }"
-              :title="showInspector ? '收起右侧观测栏' : '展开右侧观测栏'"
-              @click="showInspector = !showInspector"
+              :class="{ 'is-active': showInspector && currentDrawerTab === 'search' }"
+              title="查找聊天记录"
+              @click="toggleDrawerTab('search')"
             >
-              <PanelRight :size="16" />
+              <Search :size="16" />
+            </button>
+
+            <button
+              v-if="store.activeConversation.type === 2"
+              type="button"
+              class="btn-icon"
+              :class="{ 'is-active': showInspector && currentDrawerTab === 'group' }"
+              title="群成员与管理"
+              @click="toggleDrawerTab('group')"
+            >
+              <Users :size="16" />
+            </button>
+
+            <button
+              type="button"
+              class="btn-icon"
+              :class="{ 'is-active': showInspector && currentDrawerTab === 'metrics' }"
+              title="AI 助手与日程提醒"
+              @click="toggleDrawerTab('metrics')"
+            >
+              <Sparkles :size="16" />
             </button>
           </div>
         </header>
@@ -551,7 +734,7 @@ function handleAiSummarizeSelected() {
                 v-if="store.activePins.length > 1"
                 type="button"
                 class="pin-more-btn"
-                @click="showAllPins = !showAllPins"
+                @click.stop="showAllPins = !showAllPins"
               >
                 全部 {{ store.activePins.length }} 条
               </button>
@@ -566,7 +749,7 @@ function handleAiSummarizeSelected() {
             </div>
 
             <Transition name="pop">
-              <div v-if="showAllPins" class="pin-popover glass-strong">
+              <div v-if="showAllPins" class="pin-popover glass-strong" @click.stop>
                 <div v-for="p in store.activePins" :key="p.msgId" class="pin-pop-row">
                   <button type="button" class="pin-pop-jump" @click="jumpToSeq(p.seq)">
                     <strong>{{ p.senderNickname }}</strong>
@@ -585,14 +768,13 @@ function handleAiSummarizeSelected() {
         <div v-if="!store.activeConversation" class="empty-stage">
           <div class="empty-card glass">
             <div class="empty-orb" />
-            <h3>欢迎回到 PulseIM 工作台</h3>
-            <p>点击左侧会话开始实时沟通，右键会话可置顶/免打扰，输入 <code>@</code> 可联想提醒群友或召唤 AI。</p>
+            <h3>开始一段对话</h3>
+            <p>选择左侧会话开始聊天，右键会话可置顶或免打扰；左下角烧瓶图标可随时开启面试演练模式。</p>
           </div>
         </div>
 
         <!-- 消息滚动区 -->
         <template v-else>
-          <!-- 顶部悬浮智能胶囊（未读 AI 一键省流总结 + [有人@我] 定位） -->
           <div class="stage-banners">
             <Transition name="pop">
               <div
@@ -638,12 +820,17 @@ function handleAiSummarizeSelected() {
                 @click="triggerLoadOlder"
               >
                 <Loader2 v-if="store.loadingOlder" :size="12" class="spin" />
-                <span>{{ store.loadingOlder ? '正在拉取更早记录...' : '加载更早消息 (beforeSeq 游标)' }}</span>
+                <span>{{ store.loadingOlder ? '正在加载...' : '查看更多历史消息' }}</span>
               </button>
-              <span v-else class="no-more">已加载全部历史消息</span>
+              <span v-else class="no-more">已显示全部消息</span>
             </div>
 
             <template v-for="(msg, idx) in store.messages" :key="msg.clientMsgId || msg.id || `${msg.seq}-${idx}`">
+              <!-- 「以下是新消息」分割线 -->
+              <div v-if="idx === firstUnreadIndex" class="unread-divider">
+                <span>以下是新消息</span>
+              </div>
+
               <div v-if="shouldShowDivider(idx)" class="time-divider">
                 <span>{{ formatDateDivider(msg.createdAt) }}</span>
               </div>
@@ -651,20 +838,20 @@ function handleAiSummarizeSelected() {
               <MessageItem
                 :message="msg"
                 :is-mine="msg.senderId === store.currentUser.id"
-                :grouped="!shouldShowDivider(idx) && isGroupedMessage(idx)"
-                :now-ms="nowMs"
+                :is-group="store.activeConversation.type === 2"
+                :demo-mode="store.demoMode"
+                :grouped="!shouldShowDivider(idx) && idx !== firstUnreadIndex && isGroupedMessage(idx)"
                 :members="store.activeMembers"
                 :multi-select="store.multiSelectMode"
                 :selected="Boolean(msg.id && store.selectedMsgIds.includes(msg.id))"
                 :highlighted="Boolean(msg.seq > 0 && store.highlightedSeq === msg.seq)"
                 @reply="setReplyTarget"
-                @recall="store.recallMessage"
                 @react="store.toggleReaction"
-                @pin="store.pinMessage"
+                @open-context-menu="openMsgContextMenu"
                 @toggle-select="store.toggleSelectMsg"
-                @enter-multi-select="store.enterMultiSelect"
                 @open-read-detail="store.readDetailMsg = $event"
                 @open-bundle="store.viewingBundle = $event"
+                @jump-to-msg-id="jumpToMsgId"
                 @preview-image="store.lightboxUrl = $event"
                 @copied="store.pushToast($event)"
               />
@@ -698,7 +885,7 @@ function handleAiSummarizeSelected() {
             </button>
           </Transition>
 
-          <!-- 多选操作条（合并转发 / 交由 AI 提炼） -->
+          <!-- 多选操作条 -->
           <footer v-if="store.multiSelectMode" class="multiselect-bar">
             <span class="ms-count">已勾选 <strong>{{ store.selectedMsgIds.length }}</strong> 条消息</span>
             <div class="ms-actions">
@@ -726,12 +913,12 @@ function handleAiSummarizeSelected() {
             </div>
           </footer>
 
-          <!-- 普通输入区 -->
+          <!-- 微信/飞书风格日常输入区 -->
           <footer v-else class="composer-area">
-            <!-- @某人 液态玻璃联想弹窗 -->
+            <!-- @某人 联想浮层 -->
             <Transition name="pop">
               <div v-if="mentionOpen && mentionOptions.length > 0" class="mention-popover glass-strong">
-                <div class="mention-head">选择要提醒的成员（↑↓ 选择，Enter 确认）</div>
+                <div class="mention-head">选择要提醒的人（↑↓ 切换，Enter 确认）</div>
                 <button
                   v-for="(opt, idx) in mentionOptions"
                   :key="opt.id"
@@ -758,6 +945,54 @@ function handleAiSummarizeSelected() {
               </div>
             </Transition>
 
+            <!-- Emoji 液态玻璃选择器 -->
+            <Transition name="pop">
+              <div v-if="showEmojiPicker" class="emoji-popover glass-strong" @click.stop>
+                <div class="emoji-grid">
+                  <button
+                    v-for="emo in PICKER_EMOJIS"
+                    :key="emo"
+                    type="button"
+                    class="emoji-cell"
+                    @click="insertEmoji(emo)"
+                  >
+                    {{ emo }}
+                  </button>
+                </div>
+              </div>
+            </Transition>
+
+            <!-- AI 快捷指令浮层 -->
+            <Transition name="pop">
+              <div v-if="showAiMenu" class="ai-popover glass-strong" @click.stop>
+                <button
+                  type="button"
+                  class="ai-menu-item"
+                  @click="handleQuickAction('@AI 总结一下大家最近聊了什么', true)"
+                >
+                  <strong>总结最近聊天</strong>
+                  <small>在当前会话权限范围内梳理要点</small>
+                </button>
+                <button
+                  type="button"
+                  class="ai-menu-item"
+                  @click="handleQuickAction('@AI 15秒后提醒大家代码评审', true)"
+                >
+                  <strong>创建定时群提醒</strong>
+                  <small>体验人工审批 + 到点自动推送</small>
+                </button>
+                <button
+                  type="button"
+                  class="ai-menu-item"
+                  @click="handleQuickAction('@AI ', false)"
+                >
+                  <strong>向 @AI 自由提问</strong>
+                  <small>在输入框插入 @AI 并继续输入</small>
+                </button>
+              </div>
+            </Transition>
+
+            <!-- 引用条 -->
             <Transition name="slide-up">
               <div v-if="store.replyTarget" class="reply-bar">
                 <div class="reply-preview">
@@ -770,46 +1005,87 @@ function handleAiSummarizeSelected() {
               </div>
             </Transition>
 
-            <div class="chip-bar">
-              <button type="button" class="demo-chip liquid-lens" @click="handleQuickDemo('@AI 15秒后提醒大家代码评审', true)">
-                @AI 15秒后定时提醒
-              </button>
-              <button type="button" class="demo-chip liquid-lens" @click="handleQuickDemo('@AI 总结一下大家最近聊了什么', true)">
-                @AI 总结群聊
-              </button>
-              <button
-                type="button"
-                class="demo-chip liquid-lens"
-                @click="handleQuickDemo('@AI 用 Markdown 和 Java 代码详细讲解分布式 ID 与幂等设计', true)"
-              >
-                @AI 流式长回复
-              </button>
-              <button
-                type="button"
-                class="demo-chip liquid-lens"
-                @click="handleQuickDemo('【幂等演练】同一 clientMsgId 双发去重测试', true, true)"
-              >
-                幂等重发测试
-              </button>
+            <!-- Ctrl+V 贴图 / 文件待发送确认区 -->
+            <Transition name="slide-up">
+              <div v-if="pendingFiles.length > 0" class="staged-tray">
+                <div v-for="item in pendingFiles" :key="item.id" class="staged-card">
+                  <img v-if="item.isImage && item.previewUrl" :src="item.previewUrl" :alt="item.file.name" class="staged-thumb" />
+                  <div v-else class="staged-file-ic">
+                    <FileText :size="18" />
+                  </div>
+                  <div class="staged-info">
+                    <div class="staged-name">{{ item.file.name }}</div>
+                    <small class="tabular">{{ formatFileSize(item.file.size) }}</small>
+                  </div>
+                  <button type="button" class="staged-rm" title="移除" @click="removePendingFile(item.id)">
+                    <X :size="12" />
+                  </button>
+                </div>
+                <span class="staged-hint">按 Enter 确认发送</span>
+              </div>
+            </Transition>
+
+            <!-- 极简微信/飞书工具栏 -->
+            <div class="composer-toolbar">
+              <div class="toolbar-left">
+                <button
+                  type="button"
+                  class="tool-btn"
+                  :class="{ active: showEmojiPicker }"
+                  title="选择表情"
+                  @click.stop="showEmojiPicker = !showEmojiPicker; showAiMenu = false"
+                >
+                  <Smile :size="17" />
+                </button>
+
+                <input ref="fileInputRef" type="file" multiple hidden @change="handleFileChange" />
+                <button
+                  type="button"
+                  class="tool-btn"
+                  title="发送图片或文件（也支持 Ctrl+V 粘贴与拖拽）"
+                  @click="triggerFilePick"
+                >
+                  <Paperclip :size="17" />
+                </button>
+
+                <button
+                  type="button"
+                  class="ai-trigger-btn"
+                  :class="{ active: showAiMenu }"
+                  title="召唤 AI 助手"
+                  @click.stop="showAiMenu = !showAiMenu; showEmojiPicker = false"
+                >
+                  <Sparkles :size="13" />
+                  <span>AI 助手</span>
+                </button>
+              </div>
+
+              <!-- 仅面试演练模式下显示的极简压测/打断/幂等演练按钮 -->
+              <div v-if="store.demoMode" class="toolbar-demo">
+                <button
+                  type="button"
+                  class="demo-chip liquid-lens"
+                  @click="handleQuickAction('@AI 用 Markdown 和 Java 代码详细讲解分布式 ID 与幂等设计', true)"
+                >
+                  AI 长流式打断
+                </button>
+                <button
+                  type="button"
+                  class="demo-chip liquid-lens"
+                  @click="handleQuickAction('【幂等演练】同一 clientMsgId 双发去重测试', true, true)"
+                >
+                  幂等重发测试
+                </button>
+              </div>
             </div>
 
             <div class="composer-box">
-              <input ref="fileInputRef" type="file" multiple hidden @change="handleFileChange" />
-              <button
-                type="button"
-                class="upload-btn"
-                title="上传图片或文件（支持粘贴截图 / 拖拽 / SHA-256 秒传）"
-                @click="triggerFilePick"
-              >
-                <Paperclip :size="17" />
-              </button>
-
               <textarea
                 ref="textareaRef"
                 v-model="draft"
                 rows="1"
                 class="composer-input"
-                placeholder="输入消息（敲 @ 提醒群友或召唤 AI，Enter 发送，Shift+Enter 换行，支持 Ctrl+V 粘贴截图）"
+                placeholder="发送消息（Enter 发送，Shift+Enter 换行，输入 @ 提醒成员）"
                 @input="handleComposerInput"
                 @keydown="handleKeydown"
                 @paste="handlePaste"
@@ -818,8 +1094,8 @@ function handleAiSummarizeSelected() {
               <button
                 type="button"
                 class="btn btn-primary send-btn"
-                :class="{ ready: draft.trim() }"
-                :disabled="!draft.trim()"
+                :class="{ ready: canSendComposer }"
+                :disabled="!canSendComposer"
                 @click="handleSend(false)"
               >
                 <Send :size="15" class="send-icon" />
@@ -839,6 +1115,66 @@ function handleAiSummarizeSelected() {
       </Transition>
     </div>
   </Transition>
+
+  <!-- 全局消息右键/更多 液态玻璃菜单 -->
+  <Teleport to="body">
+    <Transition name="pop">
+      <div
+        v-if="msgMenu"
+        class="msg-ctx-menu glass-strong"
+        :style="{ left: msgMenu.x + 'px', top: msgMenu.y + 'px' }"
+        @click.stop
+      >
+        <div class="ctx-emoji-row">
+          <button
+            v-for="emo in CONTEXT_EMOJIS"
+            :key="emo"
+            type="button"
+            class="ctx-emo-btn"
+            @click="msgMenu.msg.id && store.toggleReaction(msgMenu.msg.id, emo); msgMenu = null"
+          >
+            {{ emo }}
+          </button>
+        </div>
+        <div class="ctx-divider" />
+        <button type="button" class="ctx-item" @click="setReplyTarget(msgMenu.msg); msgMenu = null">
+          <Reply :size="14" />
+          <span>引用回复</span>
+        </button>
+        <button type="button" class="ctx-item" @click="copyMessageContent(msgMenu.msg); msgMenu = null">
+          <Copy :size="14" />
+          <span>复制内容</span>
+        </button>
+        <button
+          v-if="msgMenu.msg.id"
+          type="button"
+          class="ctx-item"
+          @click="store.pinMessage(msgMenu.msg.id); msgMenu = null"
+        >
+          <Pin :size="14" />
+          <span>置顶到公告栏</span>
+        </button>
+        <button
+          v-if="msgMenu.msg.id"
+          type="button"
+          class="ctx-item"
+          @click="store.enterMultiSelect(msgMenu.msg.id); msgMenu = null"
+        >
+          <CheckSquare :size="14" />
+          <span>多选（转发 / AI 提炼）</span>
+        </button>
+        <button
+          v-if="canRecallMsg(msgMenu.msg) && msgMenu.msg.id"
+          type="button"
+          class="ctx-item danger"
+          @click="store.recallMessage(msgMenu.msg.id); msgMenu = null"
+        >
+          <Undo2 :size="14" />
+          <span>撤回消息</span>
+        </button>
+      </div>
+    </Transition>
+  </Teleport>
 
   <!-- 建群弹窗 -->
   <Transition name="modal">
@@ -949,7 +1285,7 @@ function handleAiSummarizeSelected() {
 .chat-header {
   position: relative;
   z-index: 6;
-  height: 62px;
+  height: 60px;
   padding: 0 20px;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -984,7 +1320,7 @@ function handleAiSummarizeSelected() {
   gap: 6px;
   font-size: 11.5px;
   font-weight: 600;
-  padding: 3px 10px;
+  padding: 2px 9px;
   border-radius: 999px;
   background: var(--hover);
   border: 1px solid var(--border);
@@ -1025,7 +1361,7 @@ function handleAiSummarizeSelected() {
   gap: 4px;
   font-size: 11.5px;
   font-weight: 650;
-  padding: 3px 10px;
+  padding: 2px 9px;
   border-radius: 999px;
   background: var(--ai-soft);
   border: 1px solid var(--ai-border);
@@ -1072,7 +1408,7 @@ function handleAiSummarizeSelected() {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
 }
 
 .btn-icon.is-active {
@@ -1090,7 +1426,6 @@ function handleAiSummarizeSelected() {
   box-shadow: var(--shadow-sm);
 }
 
-/* 群置顶公告条 */
 .pin-banner {
   position: relative;
   z-index: 5;
@@ -1223,7 +1558,6 @@ function handleAiSummarizeSelected() {
   color: var(--ink-secondary);
 }
 
-/* 顶部悬浮胶囊区（未读 AI 总结 + @定位） */
 .stage-banners {
   position: relative;
   z-index: 4;
@@ -1285,7 +1619,7 @@ function handleAiSummarizeSelected() {
 }
 
 .empty-card {
-  max-width: 440px;
+  max-width: 420px;
   text-align: center;
   border-radius: 24px;
   padding: 34px 28px 30px;
@@ -1294,8 +1628,8 @@ function handleAiSummarizeSelected() {
 }
 
 .empty-orb {
-  width: 64px;
-  height: 64px;
+  width: 60px;
+  height: 60px;
   margin: 0 auto 16px;
   border-radius: 50%;
   background: var(--accent-grad);
@@ -1337,10 +1671,29 @@ function handleAiSummarizeSelected() {
   color: var(--ink-muted);
 }
 
+.unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 10px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.unread-divider::before,
+.unread-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.45;
+}
+
 .time-divider {
   display: flex;
   justify-content: center;
-  margin: 18px 0 8px;
+  margin: 16px 0 8px;
   animation: pop-in 0.4s var(--ease-out);
 }
 
@@ -1358,7 +1711,7 @@ function handleAiSummarizeSelected() {
 .jump-bottom-btn {
   position: absolute;
   right: 26px;
-  bottom: 148px;
+  bottom: 146px;
   z-index: 20;
   display: inline-flex;
   align-items: center;
@@ -1379,7 +1732,6 @@ function handleAiSummarizeSelected() {
   transform: translateY(-2px) scale(1.04);
 }
 
-/* 多选底部操作栏 */
 .multiselect-bar {
   position: relative;
   z-index: 5;
@@ -1406,13 +1758,268 @@ function handleAiSummarizeSelected() {
   position: relative;
   z-index: 5;
   border-top: 1px solid var(--border);
-  padding: 10px 18px 16px;
+  padding: 8px 18px 15px;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 7px;
 }
 
-/* @联想弹窗 */
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tool-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.3s var(--ease-spring), background 0.2s, color 0.2s;
+}
+
+.tool-btn:hover,
+.tool-btn.active {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.ai-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--ai-border);
+  background: var(--ai-soft);
+  color: var(--ai);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 650;
+  cursor: pointer;
+  margin-left: 4px;
+  transition: transform 0.3s var(--ease-spring), box-shadow 0.25s;
+}
+
+.ai-trigger-btn:hover,
+.ai-trigger-btn.active {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(18, 180, 140, 0.22);
+}
+
+.toolbar-demo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.demo-chip {
+  border: 1px solid var(--glass-edge);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.3s var(--ease-spring), border-color 0.2s, color 0.2s;
+}
+
+.demo-chip:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Emoji 浮层 */
+.emoji-popover {
+  position: absolute;
+  left: 18px;
+  bottom: calc(100% + 8px);
+  width: 304px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  backdrop-filter: blur(26px) saturate(190%);
+  z-index: 35;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+}
+
+.emoji-cell {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.25s var(--ease-spring), background 0.15s;
+}
+
+.emoji-cell:hover {
+  transform: scale(1.22);
+  background: var(--hover);
+}
+
+/* AI 快捷菜单 */
+.ai-popover {
+  position: absolute;
+  left: 86px;
+  bottom: calc(100% + 8px);
+  width: 248px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  backdrop-filter: blur(26px) saturate(190%);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  z-index: 35;
+}
+
+.ai-menu-item {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  transition: background 0.16s;
+}
+
+.ai-menu-item strong {
+  font-size: 12.5px;
+}
+
+.ai-menu-item small {
+  font-size: 11px;
+  color: var(--ink-muted);
+}
+
+.ai-menu-item:hover {
+  background: var(--hover);
+  color: var(--ai);
+}
+
+/* 待发送贴图/文件预览托盘 */
+.staged-tray {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 13px;
+  background: var(--surface);
+  border: 1px solid var(--glass-edge);
+}
+
+.staged-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 24px 5px 6px;
+  border-radius: 10px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border-strong);
+  max-width: 220px;
+}
+
+.staged-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.staged-file-ic {
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.staged-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.staged-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.staged-info small {
+  font-size: 10.5px;
+  color: var(--ink-muted);
+}
+
+.staged-rm {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: var(--hover);
+  color: var(--ink-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.staged-rm:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.staged-hint {
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin-left: auto;
+}
+
 .mention-popover {
   position: absolute;
   left: 18px;
@@ -1491,50 +2098,13 @@ function handleAiSummarizeSelected() {
   color: var(--ink-secondary);
 }
 
-.chip-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.demo-chip {
-  border: 1px solid var(--glass-edge);
-  background: var(--surface);
-  color: var(--ink-secondary);
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 550;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition:
-    transform 0.35s var(--ease-spring),
-    border-color 0.2s,
-    color 0.2s,
-    background 0.2s,
-    box-shadow 0.3s;
-}
-
-.demo-chip:hover {
-  transform: translateY(-2px);
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 6px 16px rgba(47, 91, 255, 0.18);
-}
-
-.demo-chip:active {
-  transform: scale(0.94);
-  transition-duration: 0.08s;
-}
-
 .composer-box {
   display: flex;
   align-items: flex-end;
   gap: 8px;
   border: 1px solid var(--glass-edge);
   border-radius: 16px;
-  padding: 7px 8px;
+  padding: 7px 8px 7px 12px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   transition: border-color 0.25s, box-shadow 0.35s var(--ease-out), background 0.25s;
@@ -1544,26 +2114,6 @@ function handleAiSummarizeSelected() {
   border-color: var(--accent);
   background: var(--surface-strong);
   box-shadow: 0 0 0 4px var(--accent-soft), 0 10px 28px rgba(47, 91, 255, 0.12);
-}
-
-.upload-btn {
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--ink-secondary);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: transform 0.35s var(--ease-spring), background 0.2s, color 0.2s;
-}
-
-.upload-btn:hover {
-  background: var(--hover);
-  color: var(--accent);
-  transform: rotate(-12deg) scale(1.08);
 }
 
 .composer-input {
@@ -1604,6 +2154,79 @@ function handleAiSummarizeSelected() {
 @keyframes send-wiggle {
   0% { transform: scale(0.6) rotate(-20deg); }
   100% { transform: none; }
+}
+
+/* 消息右键/更多 竖排玻璃菜单 */
+.msg-ctx-menu {
+  position: fixed;
+  z-index: 320;
+  width: 210px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(26px) saturate(190%);
+  backdrop-filter: blur(26px) saturate(190%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ctx-emoji-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 3px 4px;
+}
+
+.ctx-emo-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.25s var(--ease-spring), background 0.15s;
+}
+
+.ctx-emo-btn:hover {
+  transform: scale(1.22);
+  background: var(--hover);
+}
+
+.ctx-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 4px 4px;
+}
+
+.ctx-item {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.16s, color 0.16s;
+}
+
+.ctx-item:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.ctx-item.danger:hover {
+  background: rgba(224, 49, 59, 0.12);
+  color: var(--danger);
 }
 
 .lightbox {

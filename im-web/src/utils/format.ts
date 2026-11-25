@@ -37,12 +37,13 @@ export function formatDateDivider(ts: number): string {
   const now = new Date();
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    return `今天 ${hh}:${mm}`;
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 86_400_000;
+  if (ts >= todayStart) {
+    return `${hh}:${mm}`;
+  }
+  if (ts >= yesterdayStart) {
+    return `昨天 ${hh}:${mm}`;
   }
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
