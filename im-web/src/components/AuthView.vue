@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { Moon, Sparkles, Sun } from 'lucide-vue-next';
+import { ArrowRight, Eye, EyeOff, Lock, Moon, Smile, Sun, User } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import { vGlow } from '../directives/glow';
 
 const store = useChatStore();
 
 const mode = ref<'login' | 'register'>('login');
-const username = ref('alice');
-const password = ref('123456');
+const username = ref('');
+const password = ref('');
 const nickname = ref('');
+const showPwd = ref(false);
 const loading = ref(false);
 const errorMsg = ref('');
 
-function fillDemo(user: string) {
+function fillQuick(user: string) {
   mode.value = 'login';
   username.value = user;
   password.value = '123456';
@@ -47,106 +48,104 @@ async function handleSubmit() {
 
 <template>
   <div class="auth-shell">
-    <button class="theme-corner btn-icon" :title="store.theme === 'light' ? '切换深色模式' : '切换浅色模式'" @click="store.toggleTheme">
+    <button
+      type="button"
+      class="theme-corner btn-icon"
+      :title="store.theme === 'light' ? '切换深色模式' : '切换浅色模式'"
+      @click="store.toggleTheme"
+    >
       <Moon v-if="store.theme === 'light'" :size="16" />
       <Sun v-else :size="16" />
     </button>
 
-    <div v-glow class="auth-grid glass">
-      <section class="brand-panel">
-        <div class="brand-mark">
-          <div class="brand-logo">P</div>
-          <div>
-            <div class="brand-name">PulseIM</div>
-            <div class="brand-sub">Distributed WebSocket IM &amp; AI Agent Workbench</div>
-          </div>
+    <div v-glow class="auth-card glass">
+      <header class="auth-header">
+        <div class="brand-logo">P</div>
+        <h1 class="brand-name">PulseIM</h1>
+        <p class="brand-tip">{{ mode === 'login' ? '欢迎回来' : '创建你的账号' }}</p>
+      </header>
+
+      <div class="tab-bar">
+        <span class="tab-slider" :class="{ right: mode === 'register' }" />
+        <button
+          type="button"
+          class="tab-btn"
+          :class="{ active: mode === 'login' }"
+          @click="mode = 'login'; errorMsg = ''"
+        >
+          登录
+        </button>
+        <button
+          type="button"
+          class="tab-btn"
+          :class="{ active: mode === 'register' }"
+          @click="mode = 'register'; errorMsg = ''"
+        >
+          注册
+        </button>
+      </div>
+
+      <form class="auth-form" @submit.prevent="handleSubmit">
+        <div class="input-wrap">
+          <User :size="15" class="field-icon" />
+          <input
+            v-model="username"
+            class="input with-icon"
+            placeholder="用户名"
+            autocomplete="username"
+            autofocus
+          />
         </div>
 
-        <h1 class="hero-title">分布式实时通信与异步 AI 协同工作台</h1>
-        <p class="hero-desc">
-          Netty 独立网关集群、Redis Lua 严格保序、RabbitMQ 异步 ReAct 智能体与对象存储秒传一体化演练平台。
-        </p>
-
-        <div class="feature-list">
-          <div class="feature-item">
-            <span class="feature-tag">IM 内核</span>
-            <span>双网关跨节点定向投递 / Redis+MySQL 双重幂等 / 断线增量同步 / beforeSeq 游标分页</span>
-          </div>
-          <div class="feature-item">
-            <span class="feature-tag">AI 引擎</span>
-            <span>SSE 流式推送与秒级中断 / 人工审批挂起恢复 / Redis ZSet 延迟队列自动提醒</span>
-          </div>
-          <div class="feature-item">
-            <span class="feature-tag">交互体验</span>
-            <span>WebCrypto SHA-256 文件秒传 / 2 分钟撤回 / 引用回复 / IndexedDB 本地秒开缓存</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="form-panel">
-        <div class="tab-bar">
-          <span class="tab-slider" :class="{ right: mode === 'register' }" />
-          <button
-            type="button"
-            class="tab-btn"
-            :class="{ active: mode === 'login' }"
-            @click="mode = 'login'; errorMsg = ''"
-          >
-            账号登录
-          </button>
-          <button
-            type="button"
-            class="tab-btn"
-            :class="{ active: mode === 'register' }"
-            @click="mode = 'register'; errorMsg = ''"
-          >
-            快速注册
-          </button>
-        </div>
-
-        <form class="auth-form" @submit.prevent="handleSubmit">
-          <label class="field">
-            <span>用户名</span>
-            <input v-model="username" class="input" placeholder="如 alice / bob" autocomplete="username" />
-          </label>
-
-          <Transition name="slide-up">
-            <label v-if="mode === 'register'" class="field">
-              <span>昵称</span>
-              <input v-model="nickname" class="input" placeholder="用于聊天显示的昵称" />
-            </label>
-          </Transition>
-
-          <label class="field">
-            <span>密码</span>
+        <Transition name="slide-up">
+          <div v-if="mode === 'register'" class="input-wrap">
+            <Smile :size="15" class="field-icon" />
             <input
-              v-model="password"
-              type="password"
-              class="input"
-              placeholder="默认演示密码 123456"
-              autocomplete="current-password"
+              v-model="nickname"
+              class="input with-icon"
+              placeholder="昵称（可选）"
             />
-          </label>
-
-          <Transition name="slide-up">
-            <div v-if="errorMsg" :key="errorMsg" class="error-box">{{ errorMsg }}</div>
-          </Transition>
-
-          <button type="submit" class="btn btn-primary submit-btn" :disabled="loading">
-            <Sparkles :size="15" />
-            <span>{{ loading ? '正在进入工作台...' : mode === 'login' ? '登录进入 PulseIM' : '注册并进入' }}</span>
-          </button>
-        </form>
-
-        <div class="demo-accounts">
-          <span class="demo-label">演示账号一键填充（密码均为 123456）：</span>
-          <div class="demo-btns">
-            <button type="button" class="btn btn-ghost btn-xs" @click="fillDemo('alice')">Alice</button>
-            <button type="button" class="btn btn-ghost btn-xs" @click="fillDemo('bob')">Bob</button>
-            <button type="button" class="btn btn-ghost btn-xs" @click="fillDemo('charlie')">Charlie</button>
           </div>
+        </Transition>
+
+        <div class="input-wrap">
+          <Lock :size="15" class="field-icon" />
+          <input
+            v-model="password"
+            :type="showPwd ? 'text' : 'password'"
+            class="input with-icon with-eye"
+            placeholder="密码"
+            autocomplete="current-password"
+          />
+          <button
+            type="button"
+            class="eye-btn"
+            :title="showPwd ? '隐藏密码' : '显示密码'"
+            @click="showPwd = !showPwd"
+          >
+            <EyeOff v-if="showPwd" :size="15" />
+            <Eye v-else :size="15" />
+          </button>
         </div>
-      </section>
+
+        <Transition name="slide-up">
+          <div v-if="errorMsg" :key="errorMsg" class="error-box">{{ errorMsg }}</div>
+        </Transition>
+
+        <button type="submit" class="btn btn-primary submit-btn" :disabled="loading">
+          <span>{{ loading ? '请稍候...' : mode === 'login' ? '登录' : '注册' }}</span>
+          <ArrowRight v-if="!loading" :size="15" />
+        </button>
+      </form>
+
+      <footer class="quick-row">
+        <span class="quick-label">快捷体验</span>
+        <div class="quick-links">
+          <button type="button" class="quick-btn" @click="fillQuick('alice')">Alice</button>
+          <button type="button" class="quick-btn" @click="fillQuick('bob')">Bob</button>
+          <button type="button" class="quick-btn" @click="fillQuick('charlie')">Charlie</button>
+        </div>
+      </footer>
     </div>
   </div>
 </template>
@@ -163,144 +162,65 @@ async function handleSubmit() {
 
 .theme-corner {
   position: fixed;
-  top: 18px;
-  right: 18px;
+  top: 20px;
+  right: 20px;
   z-index: 5;
 }
 
-.auth-grid {
+.auth-card {
   width: 100%;
-  max-width: 940px;
-  display: grid;
-  grid-template-columns: 1.15fr 0.85fr;
+  max-width: 388px;
+  padding: 36px 30px 26px;
   border-radius: 28px;
-  overflow: hidden;
-  animation: rise-in 0.9s var(--ease-out) both;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  animation: rise-in 0.8s var(--ease-out) both;
 }
 
-.auth-grid > section {
+.auth-card > * {
   position: relative;
   z-index: 1;
 }
 
-.brand-panel > *,
-.form-panel > * {
-  animation: rise-in 0.8s var(--ease-out) both;
-}
-
-.brand-panel > *:nth-child(2) { animation-delay: 0.08s; }
-.brand-panel > *:nth-child(3) { animation-delay: 0.16s; }
-.brand-panel > *:nth-child(4) { animation-delay: 0.24s; }
-.form-panel > *:nth-child(1) { animation-delay: 0.18s; }
-.form-panel > *:nth-child(2) { animation-delay: 0.26s; }
-.form-panel > *:nth-child(3) { animation-delay: 0.34s; }
-
-.brand-panel {
-  padding: 40px 36px;
-  background: var(--rail);
-  border-right: 1px solid var(--border);
+.auth-header {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.brand-mark {
-  display: flex;
   align-items: center;
-  gap: 12px;
+  text-align: center;
+  gap: 6px;
 }
 
 .brand-logo {
-  width: 42px;
-  height: 42px;
-  border-radius: 13px;
+  width: 50px;
+  height: 50px;
+  border-radius: 16px;
   background: var(--accent-grad);
   color: #fff;
   font-weight: 800;
-  font-size: 20px;
+  font-size: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 22px rgba(58, 107, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  margin-bottom: 4px;
+  box-shadow: 0 10px 28px rgba(58, 107, 255, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.48);
   animation: logo-breathe 4.5s ease-in-out infinite;
 }
 
 @keyframes logo-breathe {
-  0%, 100% { transform: translateY(0) rotate(0); border-radius: 13px; }
-  50% { transform: translateY(-3px) rotate(-4deg); border-radius: 16px 11px 15px 12px; }
-}
-
-.hero-title {
-  background: linear-gradient(120deg, var(--ink) 30%, var(--accent) 70%, var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  0%, 100% { transform: translateY(0) rotate(0); border-radius: 16px; }
+  50% { transform: translateY(-3px) rotate(-3deg); border-radius: 19px 14px 18px 15px; }
 }
 
 .brand-name {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
 }
 
-.brand-sub {
-  font-size: 11.5px;
+.brand-tip {
+  font-size: 13px;
   color: var(--ink-muted);
-}
-
-.hero-title {
-  font-size: 24px;
-  line-height: 1.3;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.hero-desc {
-  color: var(--ink-secondary);
-  font-size: 13.5px;
-  line-height: 1.65;
-}
-
-.feature-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.feature-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 11px 13px;
-  border-radius: 14px;
-  background: var(--surface);
-  border: 1px solid var(--glass-edge);
-  box-shadow: var(--shadow-sm);
-  font-size: 12.5px;
-  color: var(--ink-secondary);
-  transition: transform 0.4s var(--ease-spring), box-shadow 0.3s;
-}
-
-.feature-item:hover {
-  transform: translateX(4px);
-  box-shadow: 0 8px 22px rgba(34, 52, 110, 0.12);
-}
-
-.feature-tag {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.form-panel {
-  padding: 40px 32px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 20px;
 }
 
 .tab-bar {
@@ -340,7 +260,7 @@ async function handleSubmit() {
   padding: 8px;
   border-radius: 10px;
   cursor: pointer;
-  transition: color 0.3s;
+  transition: color 0.25s;
 }
 
 .tab-btn.active {
@@ -350,25 +270,58 @@ async function handleSubmit() {
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
-.field {
+.input-wrap {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--ink-secondary);
+  align-items: center;
+}
+
+.field-icon {
+  position: absolute;
+  left: 13px;
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+
+.with-icon {
+  padding-left: 38px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-radius: 12px;
+}
+
+.with-eye {
+  padding-right: 38px;
+}
+
+.eye-btn {
+  position: absolute;
+  right: 10px;
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.18s;
+}
+
+.eye-btn:hover {
+  color: var(--ink);
 }
 
 .error-box {
-  padding: 8px 11px;
+  padding: 8px 12px;
   border-radius: 10px;
-  animation: shake 0.45s var(--ease-out);
   background: rgba(220, 38, 38, 0.1);
   color: var(--danger);
   font-size: 12.5px;
+  animation: shake 0.45s var(--ease-out);
 }
 
 @keyframes shake {
@@ -381,35 +334,44 @@ async function handleSubmit() {
 
 .submit-btn {
   width: 100%;
-  padding: 11px 14px;
+  padding: 11px 16px;
   margin-top: 4px;
-  border-radius: 12px;
+  border-radius: 13px;
+  font-size: 14px;
 }
 
-.demo-accounts {
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
+.quick-row {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 
-.demo-label {
-  font-size: 12px;
+.quick-label {
+  font-size: 11.5px;
   color: var(--ink-muted);
 }
 
-.demo-btns {
+.quick-links {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
-@media (max-width: 780px) {
-  .auth-grid {
-    grid-template-columns: 1fr;
-  }
-  .brand-panel {
-    display: none;
-  }
+.quick-btn {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+}
+
+.quick-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 </style>
