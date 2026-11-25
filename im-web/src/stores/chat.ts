@@ -158,7 +158,7 @@ export const useChatStore = defineStore('chat', () => {
     localStorage.setItem('im_demo_mode', demoMode.value ? '1' : '0');
     pushToast(
       demoMode.value
-        ? '已开启面试演练模式：显示双网关切换、断网模拟、#seq 与幂等重发'
+        ? '已开启面试演练模式：显示双网关、断网模拟、#seq、幂等测试与 AI 观测'
         : '已切回日常纯净模式'
     );
   }

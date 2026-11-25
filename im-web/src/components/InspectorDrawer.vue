@@ -11,7 +11,8 @@ import {
   Sparkles,
   UserMinus,
   UserPlus,
-  Users
+  Users,
+  X
 } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import type { UserProfile } from '../types/im';
@@ -19,18 +20,31 @@ import { formatIsoDateTime, formatTimeShort } from '../utils/format';
 import UserAvatar from './UserAvatar.vue';
 import { vGlow } from '../directives/glow';
 
+type DrawerTab = 'metrics' | 'group' | 'search';
+
 const props = defineProps<{
-  requestedTab?: 'metrics' | 'group' | 'search';
+  requestedTab?: DrawerTab;
 }>();
 
 const emit = defineEmits<{
   (e: 'jump-to-seq', seq: number): void;
+  (e: 'close'): void;
 }>();
 
 const store = useChatStore();
 
 const isGroup = computed(() => store.activeConversation?.type === 2);
-const activeTab = ref<'metrics' | 'group' | 'search'>('metrics');
+
+// AI 观测功能仅在「面试演练模式」中开放；日常模式只展示群管理与聊天记录搜索
+const availableTabs = computed<DrawerTab[]>(() => {
+  const tabs: DrawerTab[] = [];
+  if (store.demoMode) tabs.push('metrics');
+  if (isGroup.value) tabs.push('group');
+  tabs.push('search');
+  return tabs;
+});
+
+const activeTab = ref<DrawerTab>('search');
 const keyword = ref('');
 
 // 群管理状态
@@ -42,17 +56,29 @@ const savingTitle = ref(false);
 watch(
   () => props.requestedTab,
   (next) => {
-    if (next) {
-      activeTab.value = next === 'group' && !isGroup.value ? 'metrics' : next;
+    if (next && availableTabs.value.includes(next)) {
+      activeTab.value = next;
+    } else if (next) {
+      activeTab.value = availableTabs.value[0];
     }
-  }
+  },
+  { immediate: true }
+);
+
+watch(
+  availableTabs,
+  (tabs) => {
+    if (!tabs.includes(activeTab.value)) {
+      activeTab.value = tabs[0];
+    }
+  },
+  { immediate: true }
 );
 
 watch(
   () => store.activeConversation,
   (conv) => {
     if (!conv || conv.type !== 2) {
-      if (activeTab.value === 'group') activeTab.value = 'metrics';
       editingTitle.value = '';
     } else {
       editingTitle.value = conv.title;
@@ -69,12 +95,7 @@ const isOwner = computed(() => {
   return self?.role === 3;
 });
 
-const tabIndex = computed(() => {
-  if (!isGroup.value) return activeTab.value === 'search' ? 1 : 0;
-  if (activeTab.value === 'group') return 1;
-  if (activeTab.value === 'search') return 2;
-  return 0;
-});
+const tabIndex = computed(() => Math.max(0, availableTabs.value.indexOf(activeTab.value)));
 
 async function runSearch() {
   await store.searchConversationHistory(keyword.value);
@@ -140,47 +161,64 @@ async function handleLeave() {
 
 <template>
   <aside v-glow class="inspector glass">
-    <div class="inspector-tabs" :class="{ triple: isGroup }">
-      <span
-        class="tab-indicator"
-        :style="{
-          width: isGroup ? 'calc(33.333% - 3px)' : 'calc(50% - 4px)',
-          transform: `translateX(${tabIndex * 100}%)`
-        }"
-      />
-      <button
-        type="button"
-        class="ins-tab"
-        :class="{ active: activeTab === 'metrics' }"
-        @click="activeTab = 'metrics'"
-      >
-        <Sparkles :size="13" />
-        <span>AI 观测</span>
+    <!-- 仅 1 个功能页时（例如日常模式单聊），展示极简标题栏；>=2 个时展示滑动玻璃标签 -->
+    <div v-if="availableTabs.length === 1" class="single-head">
+      <span class="single-title">
+        <Search :size="14" />
+        <span>查找聊天记录</span>
+      </span>
+      <button type="button" class="btn-icon close-drawer-btn" title="关闭面板" @click="emit('close')">
+        <X :size="14" />
       </button>
-      <button
-        v-if="isGroup"
-        type="button"
-        class="ins-tab"
-        :class="{ active: activeTab === 'group' }"
-        @click="activeTab = 'group'"
-      >
-        <Users :size="13" />
-        <span>群管理</span>
-      </button>
-      <button
-        type="button"
-        class="ins-tab"
-        :class="{ active: activeTab === 'search' }"
-        @click="activeTab = 'search'"
-      >
-        <Search :size="13" />
-        <span>搜索</span>
+    </div>
+
+    <div v-else class="tabs-bar-wrap">
+      <div class="inspector-tabs" :style="{ gridTemplateColumns: `repeat(${availableTabs.length}, 1fr)` }">
+        <span
+          class="tab-indicator"
+          :style="{
+            width: `calc(${100 / availableTabs.length}% - 4px)`,
+            transform: `translateX(${tabIndex * 100}%)`
+          }"
+        />
+        <button
+          v-if="store.demoMode"
+          type="button"
+          class="ins-tab"
+          :class="{ active: activeTab === 'metrics' }"
+          @click="activeTab = 'metrics'"
+        >
+          <Sparkles :size="13" />
+          <span>AI 观测</span>
+        </button>
+        <button
+          v-if="isGroup"
+          type="button"
+          class="ins-tab"
+          :class="{ active: activeTab === 'group' }"
+          @click="activeTab = 'group'"
+        >
+          <Users :size="13" />
+          <span>群管理</span>
+        </button>
+        <button
+          type="button"
+          class="ins-tab"
+          :class="{ active: activeTab === 'search' }"
+          @click="activeTab = 'search'"
+        >
+          <Search :size="13" />
+          <span>搜索</span>
+        </button>
+      </div>
+      <button type="button" class="btn-icon close-drawer-btn" title="关闭面板" @click="emit('close')">
+        <X :size="14" />
       </button>
     </div>
 
     <Transition name="tab-swap" mode="out-in">
-      <!-- Tab 1: AI 观测与日程提醒 -->
-      <div v-if="activeTab === 'metrics'" key="metrics" class="inspector-body">
+      <!-- Tab 1: AI 观测与日程提醒（仅面试演练模式可见） -->
+      <div v-if="activeTab === 'metrics' && store.demoMode" key="metrics" class="inspector-body">
         <div class="section-head">
           <span>Agent 执行指标</span>
           <button type="button" class="btn-icon" title="刷新观测" @click="store.loadAgentMetrics">
@@ -405,19 +443,45 @@ async function handleLeave() {
   z-index: 1;
 }
 
+.single-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.single-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.tabs-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 0;
+}
+
+.close-drawer-btn {
+  padding: 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
 .inspector-tabs {
+  flex: 1;
   position: relative;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  margin: 10px 10px 0;
   padding: 4px;
   border-radius: 14px;
   background: var(--rail);
   border: 1px solid var(--border);
-}
-
-.inspector-tabs.triple {
-  grid-template-columns: 1fr 1fr 1fr;
 }
 
 .tab-indicator {

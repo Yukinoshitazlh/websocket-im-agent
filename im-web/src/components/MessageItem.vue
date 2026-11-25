@@ -172,21 +172,30 @@ function handleContextMenu(ev: MouseEvent) {
     </div>
 
     <div class="avatar-col">
-      <button
-        v-if="!grouped"
-        type="button"
-        class="avatar-click-btn"
-        :title="isMine ? '点击编辑个人资料、头像、签名与状态' : `点击查看 ${message.senderNickname} 的资料名片`"
-        @click.stop="emit('open-profile', message.senderId)"
-      >
+      <template v-if="!grouped">
         <UserAvatar
+          v-if="isMine"
           :name="message.senderNickname"
           :src="resolvedAvatar"
           :is-ai="isAi"
           size="sm"
-          clickable
         />
-      </button>
+        <button
+          v-else
+          type="button"
+          class="avatar-click-btn"
+          :title="`点击查看 ${message.senderNickname} 的资料名片`"
+          @click.stop="emit('open-profile', message.senderId)"
+        >
+          <UserAvatar
+            :name="message.senderNickname"
+            :src="resolvedAvatar"
+            :is-ai="isAi"
+            size="sm"
+            clickable
+          />
+        </button>
+      </template>
     </div>
 
     <div class="msg-col">

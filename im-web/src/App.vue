@@ -3,13 +3,17 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   ArrowDown,
   AtSign,
+  Bell,
+  BellOff,
   CheckSquare,
   Copy,
   FileText,
   Forward,
   Loader2,
+  MoreHorizontal,
   Paperclip,
   Pin,
+  PinOff,
   Reply,
   Search,
   Send,
@@ -17,6 +21,7 @@ import {
   Sparkles,
   Undo2,
   Upload,
+  User,
   Users,
   X
 } from 'lucide-vue-next';
@@ -75,6 +80,7 @@ const showForwardModal = ref(false);
 const showAllPins = ref(false);
 const showEmojiPicker = ref(false);
 const showAiMenu = ref(false);
+const showChatMenu = ref(false);
 
 // 全局消息右键/更多菜单
 const msgMenu = ref<{ msg: ChatMessage; x: number; y: number } | null>(null);
@@ -103,7 +109,20 @@ function closeFloatingMenus() {
   showEmojiPicker.value = false;
   showAiMenu.value = false;
   showAllPins.value = false;
+  showChatMenu.value = false;
 }
+
+// 演练模式联动 AI 观测面板：开启时自动滑出观测面板，关闭时自动收起观测页
+watch(
+  () => store.demoMode,
+  (on) => {
+    if (on && store.activeConversation) {
+      openDrawerTab('metrics');
+    } else if (!on && currentDrawerTab.value === 'metrics') {
+      showInspector.value = false;
+    }
+  }
+);
 
 onMounted(() => {
   clockTimer = window.setInterval(() => {
@@ -127,7 +146,7 @@ function onGlobalKeyDown(e: KeyboardEvent) {
     else if (store.viewingBundle) store.viewingBundle = null;
     else if (store.readDetailMsg) store.readDetailMsg = null;
     else if (showForwardModal.value) showForwardModal.value = false;
-    else if (msgMenu.value || showEmojiPicker.value || showAiMenu.value || showAllPins.value) {
+    else if (msgMenu.value || showEmojiPicker.value || showAiMenu.value || showAllPins.value || showChatMenu.value) {
       closeFloatingMenus();
     } else if (mentionOpen.value) mentionOpen.value = false;
     else if (store.multiSelectMode) store.exitMultiSelect();
@@ -184,17 +203,21 @@ const mentionOptions = computed<MentionOption[]>(() => {
   );
 });
 
-function toggleDrawerTab(tab: 'metrics' | 'group' | 'search') {
-  if (showInspector.value && currentDrawerTab.value === tab) {
-    showInspector.value = false;
-    return;
-  }
+function openDrawerTab(tab: 'metrics' | 'group' | 'search') {
   currentDrawerTab.value = tab;
   showInspector.value = true;
   inspectorTabReq.value = tab;
   nextTick(() => {
     inspectorTabReq.value = undefined;
   });
+}
+
+function toggleDrawerTab(tab: 'metrics' | 'group' | 'search') {
+  if (showInspector.value && currentDrawerTab.value === tab) {
+    showInspector.value = false;
+    return;
+  }
+  openDrawerTab(tab);
 }
 
 function openMsgContextMenu(ev: MouseEvent, msg: ChatMessage) {
@@ -703,68 +726,107 @@ function handleAiSummarizeSelected() {
             <h2 v-else class="conv-heading muted">PulseIM</h2>
           </div>
 
-          <div class="header-right">
-            <template v-if="store.activeConversation">
-              <Transition name="fade" mode="out-in">
-                <span
-                  v-if="store.syncNotice && (store.demoMode || store.syncNotice.includes('补齐'))"
-                  :key="store.syncNotice"
-                  class="sync-pill liquid-lens tabular"
-                >
-                  {{ store.syncNotice }}
-                </span>
-              </Transition>
-
-              <button
-                type="button"
-                class="btn-icon"
-                :class="{ 'is-active': showInspector && currentDrawerTab === 'search' }"
-                title="查找聊天记录"
-                @click="toggleDrawerTab('search')"
+          <div v-if="store.activeConversation" class="header-right">
+            <Transition name="fade" mode="out-in">
+              <span
+                v-if="store.syncNotice && (store.demoMode || store.syncNotice.includes('补齐'))"
+                :key="store.syncNotice"
+                class="sync-pill liquid-lens tabular"
               >
-                <Search :size="16" />
-              </button>
-
-              <button
-                v-if="store.activeConversation.type === 2"
-                type="button"
-                class="btn-icon"
-                :class="{ 'is-active': showInspector && currentDrawerTab === 'group' }"
-                title="群成员与管理"
-                @click="toggleDrawerTab('group')"
-              >
-                <Users :size="16" />
-              </button>
-
-              <button
-                type="button"
-                class="btn-icon"
-                :class="{ 'is-active': showInspector && currentDrawerTab === 'metrics' }"
-                title="AI 助手与日程提醒"
-                @click="toggleDrawerTab('metrics')"
-              >
-                <Sparkles :size="16" />
-              </button>
-            </template>
-
-            <!-- 右上角个人头像快捷入口：点击即可改头像 / 改昵称 / 设签名与简介 / 切状态 -->
-            <button
-              type="button"
-              class="header-me-pill"
-              title="点击编辑个人资料、更换头像、个性签名与状态"
-              @click="store.openProfile()"
-            >
-              <UserAvatar
-                :name="store.currentUser.nickname"
-                :seed="store.currentUser.username"
-                :src="store.currentUser.avatar"
-                size="xs"
-                clickable
-              />
-              <span v-if="store.currentUser.statusEmoji" class="me-status-mini">
-                {{ store.currentUser.statusEmoji }}
+                {{ store.syncNotice }}
               </span>
-            </button>
+            </Transition>
+
+            <!-- 右上角统一集成功能按钮（查找聊天记录 / 群管理 / 置顶 / 免打扰 / 演练模式 AI 观测） -->
+            <div class="chat-menu-wrap" @click.stop>
+              <button
+                type="button"
+                class="btn-icon"
+                :class="{ 'is-active': showChatMenu }"
+                title="会话设置与更多功能"
+                @click="showChatMenu = !showChatMenu; showEmojiPicker = false; showAiMenu = false; showAllPins = false"
+              >
+                <MoreHorizontal :size="18" />
+              </button>
+
+              <Transition name="pop">
+                <div v-if="showChatMenu" class="chat-menu-popover glass-strong">
+                  <button
+                    type="button"
+                    class="ctx-item"
+                    @click="openDrawerTab('search'); showChatMenu = false"
+                  >
+                    <Search :size="14" />
+                    <span>查找聊天记录</span>
+                  </button>
+
+                  <button
+                    v-if="store.activeConversation.type === 2"
+                    type="button"
+                    class="ctx-item"
+                    @click="openDrawerTab('group'); showChatMenu = false"
+                  >
+                    <Users :size="14" />
+                    <span>群成员与群管理</span>
+                  </button>
+
+                  <button
+                    v-else-if="store.activeConversation.peerUserId"
+                    type="button"
+                    class="ctx-item"
+                    @click="store.openProfile(store.activeConversation.peerUserId); showChatMenu = false"
+                  >
+                    <User :size="14" />
+                    <span>查看对方资料</span>
+                  </button>
+
+                  <div class="ctx-divider" />
+
+                  <button
+                    type="button"
+                    class="ctx-item"
+                    @click="store.updateConvPreferences(store.activeConversation.id, { pinned: !store.activeConversation.pinned }); showChatMenu = false"
+                  >
+                    <PinOff v-if="store.activeConversation.pinned" :size="14" />
+                    <Pin v-else :size="14" />
+                    <span>{{ store.activeConversation.pinned ? '取消置顶会话' : '置顶该会话' }}</span>
+                    <span v-if="store.activeConversation.pinned" class="menu-state-dot" />
+                  </button>
+
+                  <button
+                    type="button"
+                    class="ctx-item"
+                    @click="store.updateConvPreferences(store.activeConversation.id, { muted: !store.activeConversation.muted }); showChatMenu = false"
+                  >
+                    <Bell v-if="store.activeConversation.muted" :size="14" />
+                    <BellOff v-else :size="14" />
+                    <span>{{ store.activeConversation.muted ? '取消消息免打扰' : '消息免打扰' }}</span>
+                    <span v-if="store.activeConversation.muted" class="menu-state-dot" />
+                  </button>
+
+                  <button
+                    type="button"
+                    class="ctx-item"
+                    @click="store.enterMultiSelect(); showChatMenu = false"
+                  >
+                    <CheckSquare :size="14" />
+                    <span>批量选择消息</span>
+                  </button>
+
+                  <template v-if="store.demoMode">
+                    <div class="ctx-divider" />
+                    <button
+                      type="button"
+                      class="ctx-item ai-item"
+                      @click="openDrawerTab('metrics'); showChatMenu = false"
+                    >
+                      <Sparkles :size="14" />
+                      <span>AI 观测与日程（演练）</span>
+                    </button>
+                  </template>
+                </div>
+              </Transition>
+            </div>
           </div>
         </header>
 
@@ -1161,6 +1223,7 @@ function handleAiSummarizeSelected() {
           v-if="showInspector"
           :requested-tab="inspectorTabReq"
           @jump-to-seq="jumpToSeq"
+          @close="showInspector = false"
         />
       </Transition>
     </div>
@@ -1388,38 +1451,43 @@ function handleAiSummarizeSelected() {
   white-space: nowrap;
 }
 
-.header-me-pill {
+.chat-menu-wrap {
   position: relative;
-  border: 1px solid var(--glass-edge);
-  background: var(--surface);
-  padding: 3px;
-  border-radius: 12px;
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  margin-left: 2px;
-  box-shadow: var(--shadow-sm);
-  transition: transform 0.3s var(--ease-spring), border-color 0.2s;
 }
 
-.header-me-pill:hover {
-  transform: translateY(-1px);
-  border-color: var(--accent);
-}
-
-.me-status-mini {
+.chat-menu-popover {
   position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--surface-strong);
+  top: calc(100% + 8px);
+  right: 0;
+  width: 214px;
+  padding: 6px;
+  border-radius: 16px;
   border: 1px solid var(--glass-edge);
-  font-size: 10px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 50;
+  transform-origin: top right;
+}
+
+.menu-state-dot {
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ctx-item.ai-item {
+  color: var(--ai);
+}
+
+.ctx-item.ai-item:hover {
+  background: var(--ai-soft);
+  color: var(--ai);
 }
 
 .conv-heading {
