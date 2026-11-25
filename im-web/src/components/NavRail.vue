@@ -1,26 +1,46 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import {
   FlaskConical,
   LogOut,
   MessageSquare,
   Moon,
+  Settings,
   Sun,
-  Users
+  User,
+  Volume2,
+  VolumeX
 } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import UserAvatar from './UserAvatar.vue';
 import { vGlow } from '../directives/glow';
 
-const emit = defineEmits<{
-  (e: 'open-group-modal'): void;
-}>();
-
 const store = useChatStore();
+const showSettings = ref(false);
 
 const totalUnread = computed(() =>
   store.conversations.reduce((sum, c) => (c.muted ? sum : sum + (c.unreadCount || 0)), 0)
 );
+
+function closeSettings() {
+  showSettings.value = false;
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && showSettings.value) {
+    showSettings.value = false;
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('click', closeSettings);
+  window.addEventListener('keydown', onKeyDown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeSettings);
+  window.removeEventListener('keydown', onKeyDown);
+});
 </script>
 
 <template>
@@ -49,7 +69,7 @@ const totalUnread = computed(() =>
       <span v-else class="ws-dot" :class="store.wsState" />
     </button>
 
-    <!-- 中部核心入口 -->
+    <!-- 中部消息入口（发起群聊已统一保留在会话栏搜索框旁 + 按钮） -->
     <div class="nav-group">
       <button type="button" class="nav-btn active" title="消息">
         <MessageSquare :size="20" />
@@ -57,47 +77,80 @@ const totalUnread = computed(() =>
           {{ totalUnread > 99 ? '99+' : totalUnread }}
         </span>
       </button>
-
-      <button
-        type="button"
-        class="nav-btn"
-        title="发起群聊"
-        @click="emit('open-group-modal')"
-      >
-        <Users :size="20" />
-      </button>
     </div>
 
-    <!-- 底部设置与开关 -->
-    <div class="nav-group nav-bottom">
+    <!-- 底部单个集成设置按钮 -->
+    <div class="nav-group nav-bottom" @click.stop>
       <button
         type="button"
         class="nav-btn"
-        :class="{ 'demo-on': store.demoMode }"
-        :title="store.demoMode ? '关闭面试演练模式（切回日常纯净模式）' : '开启面试演练模式（显示网关切换/断网/#seq/幂等测试）'"
-        @click="store.toggleDemoMode"
+        :class="{ active: showSettings }"
+        title="设置与偏好"
+        @click="showSettings = !showSettings"
       >
-        <FlaskConical :size="19" />
+        <Settings :size="20" :class="{ rotated: showSettings }" class="gear-ic" />
+        <span v-if="store.demoMode" class="demo-dot" title="当前处于面试演练模式" />
       </button>
 
-      <button
-        type="button"
-        class="nav-btn"
-        :title="store.theme === 'light' ? '切换深色主题' : '切换浅色主题'"
-        @click="store.toggleTheme"
-      >
-        <Moon v-if="store.theme === 'light'" :size="19" />
-        <Sun v-else :size="19" />
-      </button>
+      <Transition name="pop">
+        <div v-if="showSettings" class="settings-popover glass-strong">
+          <button
+            type="button"
+            class="set-item"
+            @click="store.openProfile(); closeSettings()"
+          >
+            <User :size="15" />
+            <span>个人资料与状态</span>
+          </button>
 
-      <button
-        type="button"
-        class="nav-btn danger"
-        title="退出登录"
-        @click="store.logout"
-      >
-        <LogOut :size="19" />
-      </button>
+          <button
+            type="button"
+            class="set-item"
+            @click="store.toggleTheme()"
+          >
+            <Moon v-if="store.theme === 'light'" :size="15" />
+            <Sun v-else :size="15" />
+            <span>{{ store.theme === 'light' ? '切换深色模式' : '切换浅色模式' }}</span>
+            <span class="mini-tag">{{ store.theme === 'dark' ? '深色' : '浅色' }}</span>
+          </button>
+
+          <button
+            type="button"
+            class="set-item"
+            @click="store.toggleSound()"
+          >
+            <Volume2 v-if="store.soundEnabled" :size="15" />
+            <VolumeX v-else :size="15" />
+            <span>新消息提示音</span>
+            <span class="mini-switch" :class="{ on: store.soundEnabled }">
+              <i />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="set-item"
+            @click="store.toggleDemoMode()"
+          >
+            <FlaskConical :size="15" />
+            <span>面试演练模式</span>
+            <span class="mini-switch ai" :class="{ on: store.demoMode }">
+              <i />
+            </span>
+          </button>
+
+          <div class="set-divider" />
+
+          <button
+            type="button"
+            class="set-item danger"
+            @click="closeSettings(); store.logout()"
+          >
+            <LogOut :size="15" />
+            <span>退出登录</span>
+          </button>
+        </div>
+      </Transition>
     </div>
   </nav>
 </template>
@@ -113,6 +166,7 @@ const totalUnread = computed(() =>
   flex-direction: column;
   align-items: center;
   gap: 18px;
+  z-index: 30;
   animation: rise-in 0.65s var(--ease-out) both;
 }
 
@@ -173,6 +227,7 @@ const totalUnread = computed(() =>
 }
 
 .nav-bottom {
+  position: relative;
   margin-top: auto;
 }
 
@@ -213,16 +268,23 @@ const totalUnread = computed(() =>
   box-shadow: var(--shadow-sm);
 }
 
-.nav-btn.demo-on {
-  background: rgba(18, 180, 140, 0.18);
-  color: var(--ai);
-  border-color: var(--ai-border);
-  box-shadow: 0 4px 14px rgba(18, 180, 140, 0.22);
+.gear-ic {
+  transition: transform 0.45s var(--ease-spring);
 }
 
-.nav-btn.danger:hover {
-  color: var(--danger);
-  background: rgba(224, 49, 59, 0.12);
+.gear-ic.rotated {
+  transform: rotate(60deg);
+}
+
+.demo-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ai);
+  box-shadow: 0 0 8px var(--ai);
 }
 
 .nav-badge {
@@ -241,5 +303,99 @@ const totalUnread = computed(() =>
   align-items: center;
   justify-content: center;
   box-shadow: 0 2px 8px rgba(224, 49, 59, 0.35);
+}
+
+/* 底部集成设置液态玻璃浮层 */
+.settings-popover {
+  position: absolute;
+  left: calc(100% + 14px);
+  bottom: 0;
+  width: 224px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 80;
+  transform-origin: bottom left;
+}
+
+.set-item {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.16s, color 0.16s;
+}
+
+.set-item:hover {
+  background: var(--hover);
+  color: var(--accent);
+}
+
+.set-item.danger:hover {
+  background: rgba(224, 49, 59, 0.12);
+  color: var(--danger);
+}
+
+.set-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 4px;
+}
+
+.mini-tag {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ink-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.mini-switch {
+  margin-left: auto;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.25s;
+}
+
+.mini-switch i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.28s var(--ease-spring);
+}
+
+.mini-switch.on {
+  background: var(--accent);
+}
+
+.mini-switch.ai.on {
+  background: var(--ai);
+}
+
+.mini-switch.on i {
+  transform: translateX(13px);
 }
 </style>

@@ -641,9 +641,9 @@ function handleAiSummarizeSelected() {
     <!-- 未登录 -->
     <AuthView v-if="!store.token || !store.currentUser" key="auth" />
 
-    <!-- 主工作台（58px 极简导航竖条 + 276px 会话栏 + 宽敞主聊天区 + 按需滑出右侧抽屉） -->
+    <!-- 主工作台（60px 极简导航竖条 + 276px 会话栏 + 宽敞主聊天区 + 按需滑出右侧抽屉） -->
     <div v-else key="workbench" class="workbench">
-      <NavRail @open-group-modal="showGroupModal = true" />
+      <NavRail />
       <SidebarRail @open-group-modal="showGroupModal = true" />
 
       <main
@@ -880,7 +880,7 @@ function handleAiSummarizeSelected() {
           <div class="empty-card glass">
             <div class="empty-orb" />
             <h3>开始一段对话</h3>
-            <p>选择左侧会话开始聊天，右键会话可置顶或免打扰；左下角烧瓶图标可随时开启面试演练模式。</p>
+            <p>选择左侧会话开始聊天，右键会话可置顶或免打扰；左下角齿轮设置可切换主题与面试演练模式。</p>
           </div>
         </div>
 
