@@ -1,5 +1,7 @@
 # PulseIM — 分布式 WebSocket 即时聊天 + AI Agent 协同系统
 
+[![CI & Release](https://github.com/Yukinoshitazlh/websocket-im-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Yukinoshitazlh/websocket-im-agent/actions/workflows/ci.yml)
+
 基于 **JDK 21 + Spring Boot 3.3 + Netty 4 + MySQL 8.0 + Redis 7 + RabbitMQ 3.13 + WebFlux + Vue 3 / TypeScript / Vite** 构建的分布式即时聊天与 AI Agent 工程化落地项目。
 
 * 架构设计、协议规范与 6～8 周演进路线：[docs/DESIGN.md](docs/DESIGN.md)
@@ -21,6 +23,8 @@
 
 ```text
 .
+├── .github/workflows/
+│   └── ci.yml                  # GitHub Actions 自动化构建、全模块单测门禁与 Tag Release 发版
 ├── docs/
 │   ├── DESIGN.md               # 系统架构图、时序图、协议规范与 6～8 周路线
 │   └── INTERVIEW_GUIDE.md      # 简历 STAR 话术与面试高频 15 问复盘
@@ -86,9 +90,18 @@ mysql --default-character-set=utf8mb4 -u root -p < sql/init.sql
 3. **根治 JDK 21 虚拟线程 Pinning**：将事务提交后的未读递增与 RabbitMQ 发布卸载至专用平台线程池 `pushDispatchExecutor`，规避 `amqp-client` `synchronized` 导致的载体线程固定。
 
 ```powershell
-# 运行全模块单元测试（14 个单测覆盖 JWT、分布式锁 Seq、双重幂等、差异化限流、延迟队列提醒 CAS、表情表态与置顶、防注入权限隔离与实时断流）
+# 运行全模块单元测试（覆盖 JWT、分布式锁 Seq、双重幂等、差异化限流、延迟队列提醒 CAS、表情表态与置顶、防注入权限隔离与实时断流）
 mvn test
 
 # 运行真实 WebSocket 并发长连接与跨用户端到端压测（Node.js 24+，零依赖）
 node scripts/load-test.mjs --users=200 --msgs=5 --ws=ws://127.0.0.1:9001/ws,ws://127.0.0.1:9002/ws
 ```
+
+---
+
+## CI/CD 自动化构建与发版
+
+仓库已集成轻量级 **GitHub Actions** 流水线（[.github/workflows/ci.yml](.github/workflows/ci.yml)），无需额外配置 Docker 或外部中间件即可运行：
+
+1. **PR / Push 质量门禁**：自动执行 `im-web` 依赖安装、`vue-tsc` 静态类型检查与 Vite 构建（同步产物至 `im-server` 静态目录）→ JDK 21 运行全模块单元测试（`mvn -B test`）→ 打包 `im-server`、`im-gateway`、`im-agent` 三个可执行 Fat JAR 并生成 `SHA256SUMS.txt` 归档。
+2. **Tag 自动发版**：推送语义化版本标签（如 `git tag v1.0.0 && git push origin v1.0.0`）后，自动创建 GitHub Release 并附带构建产物、校验文件与自动生成的变更说明。
