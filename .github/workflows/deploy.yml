@@ -1,0 +1,111 @@
+name: Deploy Production (Zero-Docker CD)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gateway_instances:
+        description: '滚动重启的网关节点编号（单网关填 1，双网关填 1 2）'
+        required: true
+        default: '1'
+  push:
+    tags:
+      - 'v2.*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  check-secrets:
+    name: Check Production Deploy Config
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check DEPLOY_HOST secret
+        id: check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          if [ -n "${DEPLOY_HOST}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "跳过生产部署：仓库尚未配置 DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY Secrets。"
+          fi
+
+  build-and-deploy:
+    name: Build, Upload & Rolling Deploy via SSH
+    needs: check-secrets
+    if: needs.check-secrets.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: im-web/package-lock.json
+
+      - name: Build frontend SPA
+        working-directory: im-web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'maven'
+
+      - name: Run unit tests and package Fat JARs
+        run: mvn -B package
+
+      - name: Prepare normalized release directory
+        id: prep
+        run: |
+          VERSION="${GITHUB_REF_NAME//\//-}-$(date +%Y%m%d%H%M)-${GITHUB_SHA::7}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          mkdir -p "dist-release/${VERSION}"
+          cp "$(find im-server/target -maxdepth 1 -type f -name 'im-server-*.jar' | head -n 1)" "dist-release/${VERSION}/im-server.jar"
+          cp "$(find im-gateway/target -maxdepth 1 -type f -name 'im-gateway-*.jar' | head -n 1)" "dist-release/${VERSION}/im-gateway.jar"
+          cp "$(find im-agent/target -maxdepth 1 -type f -name 'im-agent-*.jar' | head -n 1)" "dist-release/${VERSION}/im-agent.jar"
+          (cd "dist-release/${VERSION}" && sha256sum im-server.jar im-gateway.jar im-agent.jar > SHA256SUMS.txt)
+          ls -lh "dist-release/${VERSION}"
+
+      - name: Configure SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${DEPLOY_PORT}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Upload artifacts and execute rolling deploy with auto-rollback
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          RELEASE_VERSION: ${{ steps.prep.outputs.version }}
+          GATEWAY_INSTANCES: ${{ github.event.inputs.gateway_instances || '1' }}
+        run: |
+          SSH_OPTS="-i ~/.ssh/deploy_key -p ${DEPLOY_PORT} -o StrictHostKeyChecking=yes"
+          SCP_OPTS="-i ~/.ssh/deploy_key -P ${DEPLOY_PORT} -o StrictHostKeyChecking=yes"
+
+          ssh ${SSH_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p /opt/pulseim/releases/${RELEASE_VERSION}"
+          scp ${SCP_OPTS} "dist-release/${RELEASE_VERSION}/"* "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/pulseim/releases/${RELEASE_VERSION}/"
+          scp ${SCP_OPTS} deploy/scripts/deploy.sh "${DEPLOY_USER}@${DEPLOY_HOST}:/opt/pulseim/deploy.sh"
+          ssh ${SSH_OPTS} "${DEPLOY_USER}@${DEPLOY_HOST}" "chmod +x /opt/pulseim/deploy.sh && sudo /opt/pulseim/deploy.sh '${RELEASE_VERSION}' '${GATEWAY_INSTANCES}'"

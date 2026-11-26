@@ -7,6 +7,7 @@ export interface ApiResult<T> {
 export interface UserProfile {
   id: string;
   username: string;
+  email?: string;
   nickname: string;
   avatar: string;
   signature?: string;
@@ -20,6 +21,31 @@ export interface UserProfile {
 export interface AuthResponse {
   token: string;
   user: UserProfile;
+}
+
+export interface AuthConfig {
+  requireCaptcha: boolean;
+  requireEmailCode: boolean;
+  inviteCodeRequired: boolean;
+  allowDemoQuickLogin: boolean;
+  showDemoMode: boolean;
+}
+
+export interface CaptchaResp {
+  captchaId: string;
+  svgDataUri: string;
+  expireSeconds: number;
+}
+
+export interface SendEmailCodeResp {
+  cooldownSeconds: number;
+  expireSeconds: number;
+  devCodeHint?: string | null;
+}
+
+export interface WsTicketResp {
+  ticket: string;
+  expireSeconds: number;
 }
 
 export interface Conversation {
@@ -207,6 +233,7 @@ export type WsPacketType =
   | 'AGENT_CANCEL'
   | 'AGENT_APPROVAL_CARD'
   | 'AGENT_APPROVAL'
+  | 'FORCE_LOGOUT'
   | 'ERROR';
 
 export interface WsPacket<T = unknown> {

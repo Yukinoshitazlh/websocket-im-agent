@@ -27,10 +27,15 @@ public class JwtTokenUtil {
     }
 
     public String generateToken(Long userId, String username) {
+        return generateToken(userId, username, 1);
+    }
+
+    public String generateToken(Long userId, String username, int tokenVersion) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
+                .claim("tv", tokenVersion)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expireSeconds)))
                 .signWith(secretKey)
@@ -48,5 +53,17 @@ public class JwtTokenUtil {
     public Long extractUserId(String token) {
         Claims claims = parseAndValidate(token);
         return Long.valueOf(claims.getSubject());
+    }
+
+    public int extractTokenVersion(Claims claims) {
+        Object tv = claims.get("tv");
+        if (tv instanceof Number n) {
+            return n.intValue();
+        }
+        return 1;
+    }
+
+    public int extractTokenVersion(String token) {
+        return extractTokenVersion(parseAndValidate(token));
     }
 }

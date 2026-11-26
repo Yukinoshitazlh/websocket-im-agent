@@ -1,5 +1,11 @@
 import type { ApiResult, FileUploadResp } from '../types/im';
 
+let unauthorizedHandler: ((message: string) => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (message: string) => void) {
+  unauthorizedHandler = handler;
+}
+
 export async function apiRequest<T>(
   path: string,
   token: string,
@@ -15,6 +21,9 @@ export async function apiRequest<T>(
   const res = await fetch(path, { ...options, headers });
   const json = (await res.json()) as ApiResult<T>;
   if (json.code !== 200) {
+    if (token && json.code === 4010 && unauthorizedHandler) {
+      unauthorizedHandler(json.message || '登录状态已失效，请重新登录');
+    }
     throw new Error(json.message || '请求失败');
   }
   return json.data;

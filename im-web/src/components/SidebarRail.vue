@@ -188,9 +188,9 @@ function getDraftText(convId: string): string {
           </span>
         </div>
 
-        <div v-if="store.demoMode || store.manualOffline" class="gateway-controls">
+        <div v-if="(store.authConfig.showDemoMode && store.demoMode) || store.manualOffline" class="gateway-controls">
           <select
-            v-if="store.demoMode"
+            v-if="store.authConfig.showDemoMode && store.demoMode"
             class="gw-select"
             :value="store.wsUrl"
             @change="store.switchGateway(($event.target as HTMLSelectElement).value)"

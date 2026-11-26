@@ -1,0 +1,24 @@
+[Unit]
+Description=PulseIM Netty WebSocket Gateway Node %i
+After=network.target im-server.service redis-server.service rabbitmq-server.service
+Wants=im-server.service
+
+[Service]
+Type=simple
+User=pulseim
+Group=pulseim
+WorkingDirectory=/opt/pulseim/current
+EnvironmentFile=/etc/pulseim/pulseim.env
+# 可选节点差异化配置（如 /etc/pulseim/gateway-1.env 设置 GATEWAY_NODE_ID=gateway-1, WS_PORT=9001, GATEWAY_HTTP_PORT=8081）
+EnvironmentFile=-/etc/pulseim/gateway-%i.env
+ExecStart=/usr/bin/java -Xms256m -Xmx512m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError \
+  -Dspring.profiles.active=prod \
+  -Dlogging.file.path=/var/log/pulseim \
+  -jar /opt/pulseim/current/im-gateway.jar
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=100000
+
+[Install]
+WantedBy=multi-user.target

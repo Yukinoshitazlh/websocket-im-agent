@@ -2,6 +2,7 @@ package com.imagent.server.controller;
 
 import com.imagent.common.model.Result;
 import com.imagent.server.common.UserContext;
+import com.imagent.server.dto.AuthResponse;
 import com.imagent.server.dto.ChangePasswordRequest;
 import com.imagent.server.dto.UpdateProfileRequest;
 import com.imagent.server.dto.UserProfileVO;
@@ -36,9 +37,8 @@ public class UserController {
     }
 
     @PutMapping("/me/password")
-    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
-        userService.changePassword(UserContext.getUserId(), request);
-        return Result.ok();
+    public Result<AuthResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+        return Result.ok(userService.changePassword(UserContext.getUserId(), request));
     }
 
     /**

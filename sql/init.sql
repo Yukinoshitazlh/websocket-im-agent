@@ -14,6 +14,7 @@ USE im_agent_chat;
 CREATE TABLE IF NOT EXISTS im_user (
     id            BIGINT       NOT NULL COMMENT '用户ID（雪花算法或业务生成）',
     username      VARCHAR(64)  NOT NULL COMMENT '唯一登录账号',
+    email         VARCHAR(128) DEFAULT NULL COMMENT '绑定邮箱（唯一，支持邮箱注册与登录）',
     password_hash VARCHAR(128) NOT NULL COMMENT 'BCrypt 密码哈希',
     nickname      VARCHAR(64)  NOT NULL COMMENT '展示昵称',
     avatar        VARCHAR(255) NOT NULL DEFAULT '' COMMENT '头像 URL',
@@ -23,10 +24,12 @@ CREATE TABLE IF NOT EXISTS im_user (
     status_text   VARCHAR(32)  NOT NULL DEFAULT '' COMMENT '自定义状态文案',
     user_type     TINYINT      NOT NULL DEFAULT 1 COMMENT '1=普通用户, 2=AI Agent',
     status        TINYINT      NOT NULL DEFAULT 1 COMMENT '1=正常, 0=禁用',
+    token_version INT          NOT NULL DEFAULT 1 COMMENT 'JWT 令牌版本号，改密/封号时递增令旧令牌失效',
     created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
-    UNIQUE KEY uk_username (username)
+    UNIQUE KEY uk_username (username),
+    UNIQUE KEY uk_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
 -- ----------------------------------------------------------------------------

@@ -8,10 +8,12 @@ import com.imagent.server.dto.FileUploadVO;
 import com.imagent.server.entity.ImFileObject;
 import com.imagent.server.mapper.ImFileObjectMapper;
 import io.minio.BucketExistsArgs;
+import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.SetBucketPolicyArgs;
+import io.minio.http.Method;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -24,14 +26,17 @@ import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 图片/文件存储服务：
- * 1. 基于 SHA-256 唯一索引实现秒传（前端先调 instant-check，命中直接零流量返回 URL）；
- * 2. 优先上传至 MinIO 对象存储（自动建桶并配置公共只读策略）；
- * 3. AUTO 模式下若本地未启动 MinIO 容器，自动无缝降级到本地 uploads/ 目录静态托管。
+ * 图片/文件存储服务（v2.0 安全加固版）：
+ * 1. 严格扩展名白名单 + 文件头魔数（Magic Bytes）校验，杜绝 .html/.svg/.js 等同源存储型 XSS 与伪装文件上传；
+ * 2. 基于 SHA-256 唯一索引实现秒传；
+ * 3. 支持 MinIO 私有桶预签名 URL 或独立域名，AUTO 模式下无 MinIO 时自动降级到本地安全下载端点。
  */
 @Slf4j
 @Service
@@ -39,6 +44,38 @@ public class FileStorageService {
 
     private static final long MAX_BYTES = 20L * 1024 * 1024;
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+    /** 仅允许安全位图内联预览，严禁 SVG/HTML 等脚本格式 */
+    public static final Set<String> SAFE_INLINE_IMAGE_EXTS = Set.of(
+            ".jpg", ".jpeg", ".png", ".gif", ".webp"
+    );
+
+    /** 允许上传的文档/压缩包后缀白名单 */
+    public static final Set<String> ALLOWED_EXTENSIONS = Set.of(
+            ".jpg", ".jpeg", ".png", ".gif", ".webp",
+            ".pdf", ".txt", ".md", ".csv",
+            ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+            ".zip"
+    );
+
+    private static final Map<String, String> SAFE_MIME_TYPES = Map.ofEntries(
+            Map.entry(".jpg", "image/jpeg"),
+            Map.entry(".jpeg", "image/jpeg"),
+            Map.entry(".png", "image/png"),
+            Map.entry(".gif", "image/gif"),
+            Map.entry(".webp", "image/webp"),
+            Map.entry(".pdf", "application/pdf"),
+            Map.entry(".txt", "text/plain; charset=UTF-8"),
+            Map.entry(".md", "text/plain; charset=UTF-8"),
+            Map.entry(".csv", "text/csv; charset=UTF-8"),
+            Map.entry(".doc", "application/msword"),
+            Map.entry(".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+            Map.entry(".xls", "application/vnd.ms-excel"),
+            Map.entry(".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            Map.entry(".ppt", "application/vnd.ms-powerpoint"),
+            Map.entry(".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+            Map.entry(".zip", "application/zip")
+    );
 
     private final ImFileObjectMapper fileObjectMapper;
     private final StorageProperties properties;
@@ -71,11 +108,20 @@ public class FileStorageService {
             throw new BizException(ErrorCode.BAD_REQUEST, "单个文件大小不能超过 20MB");
         }
 
+        String originalName = sanitizeFileName(file.getOriginalFilename());
+        String ext = extractExtension(originalName);
+        if (!ALLOWED_EXTENSIONS.contains(ext)) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "不支持的文件类型（已拦截高危扩展名）: " + (ext.isEmpty() ? "未知" : ext));
+        }
+
         byte[] bytes;
         String sha256;
         try {
             bytes = file.getBytes();
+            validateMagicBytes(ext, bytes);
             sha256 = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
             throw new BizException(ErrorCode.INTERNAL_ERROR, "读取文件或计算 SHA-256 失败");
         }
@@ -88,10 +134,7 @@ public class FileStorageService {
             return toVO(existing, true);
         }
 
-        String originalName = sanitizeFileName(file.getOriginalFilename());
-        String contentType = (file.getContentType() == null || file.getContentType().isBlank())
-                ? "application/octet-stream" : file.getContentType();
-        String ext = extractExtension(originalName);
+        String contentType = SAFE_MIME_TYPES.getOrDefault(ext, "application/octet-stream");
         String objectKey = LocalDate.now().format(DATE_FMT) + "/" + UUID.randomUUID().toString().replace("-", "") + ext;
 
         String storageType;
@@ -105,7 +148,7 @@ public class FileStorageService {
                 storageType = "MINIO";
                 url = minioUrl;
             } else if ("MINIO".equalsIgnoreCase(properties.getMode())) {
-                throw new BizException(ErrorCode.INTERNAL_ERROR, "MinIO 对象存储不可用，请确认容器已启动");
+                throw new BizException(ErrorCode.INTERNAL_ERROR, "MinIO 对象存储不可用，请确认服务已启动");
             } else {
                 storageType = "LOCAL";
                 url = saveLocally(objectKey, bytes);
@@ -132,6 +175,75 @@ public class FileStorageService {
         }
     }
 
+    /**
+     * 安全解析本地文件路径（防止目录穿越，仅允许访问合法白名单文件）
+     */
+    public Path resolveLocalFile(String dateDir, String fileName) {
+        if (dateDir == null || !dateDir.matches("\\d{8}")
+                || fileName == null || !fileName.matches("[a-zA-Z0-9._-]+")) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "非法文件路径");
+        }
+        String ext = extractExtension(fileName);
+        if (!ALLOWED_EXTENSIONS.contains(ext)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "禁止访问该类型文件");
+        }
+        Path root = Path.of(properties.getLocalDir()).toAbsolutePath().normalize();
+        Path target = root.resolve(dateDir).resolve(fileName).normalize();
+        if (!target.startsWith(root) || !Files.exists(target) || !Files.isRegularFile(target)) {
+            throw new BizException(ErrorCode.NOT_FOUND, "文件不存在");
+        }
+        return target;
+    }
+
+    public String resolveSafeContentType(String fileName) {
+        return SAFE_MIME_TYPES.getOrDefault(extractExtension(fileName), "application/octet-stream");
+    }
+
+    public boolean isSafeInlineImage(String fileName) {
+        return SAFE_INLINE_IMAGE_EXTS.contains(extractExtension(fileName));
+    }
+
+    /**
+     * 文件头魔数校验，防止通过修改后缀名绕过白名单
+     */
+    void validateMagicBytes(String ext, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "文件内容为空");
+        }
+        boolean valid = switch (ext) {
+            case ".jpg", ".jpeg" -> bytes.length >= 3
+                    && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8 && (bytes[2] & 0xFF) == 0xFF;
+            case ".png" -> bytes.length >= 8
+                    && (bytes[0] & 0xFF) == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47
+                    && bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A;
+            case ".gif" -> bytes.length >= 6
+                    && bytes[0] == 'G' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == '8'
+                    && (bytes[4] == '7' || bytes[4] == '9') && bytes[5] == 'a';
+            case ".webp" -> bytes.length >= 12
+                    && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                    && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+            case ".pdf" -> bytes.length >= 4
+                    && bytes[0] == '%' && bytes[1] == 'P' && bytes[2] == 'D' && bytes[3] == 'F';
+            case ".zip", ".docx", ".xlsx", ".pptx" -> bytes.length >= 4
+                    && bytes[0] == 'P' && bytes[1] == 'K'
+                    && (bytes[2] == 0x03 || bytes[2] == 0x05 || bytes[2] == 0x07);
+            case ".doc", ".xls", ".ppt" -> bytes.length >= 8
+                    && (bytes[0] & 0xFF) == 0xD0 && (bytes[1] & 0xFF) == 0xCF
+                    && (bytes[2] & 0xFF) == 0x11 && (bytes[3] & 0xFF) == 0xE0;
+            case ".txt", ".md", ".csv" -> !looksLikeHtmlScript(bytes);
+            default -> false;
+        };
+        if (!valid) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "文件内容与扩展名不匹配或包含不安全内容");
+        }
+    }
+
+    private boolean looksLikeHtmlScript(byte[] bytes) {
+        int probeLen = Math.min(bytes.length, 512);
+        String head = new String(bytes, 0, probeLen).trim().toLowerCase();
+        return head.startsWith("<!doctype html") || head.startsWith("<html") || head.startsWith("<script") || head.startsWith("<svg");
+    }
+
     private String tryUploadMinio(String objectKey, byte[] bytes, String contentType) {
         try {
             ensureBucketExists();
@@ -141,12 +253,26 @@ public class FileStorageService {
                     .stream(new ByteArrayInputStream(bytes), bytes.length, -1)
                     .contentType(contentType)
                     .build());
-            return properties.getMinioEndpoint().replaceAll("/+$", "")
-                    + "/" + properties.getMinioBucket() + "/" + objectKey;
+            return resolveMinioAccessUrl(objectKey);
         } catch (Exception e) {
             log.warn("MinIO 上传不可用，自动降级为本地文件存储: {}", e.getMessage());
             return null;
         }
+    }
+
+    private String resolveMinioAccessUrl(String objectKey) throws Exception {
+        if (properties.isMinioPresignedEnabled()) {
+            return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+                    .method(Method.GET)
+                    .bucket(properties.getMinioBucket())
+                    .object(objectKey)
+                    .expiry(properties.getMinioPresignedExpirySeconds(), TimeUnit.SECONDS)
+                    .build());
+        }
+        String base = (properties.getMinioPublicBaseUrl() != null && !properties.getMinioPublicBaseUrl().isBlank())
+                ? properties.getMinioPublicBaseUrl()
+                : properties.getMinioEndpoint();
+        return base.replaceAll("/+$", "") + "/" + properties.getMinioBucket() + "/" + objectKey;
     }
 
     private void ensureBucketExists() throws Exception {
@@ -156,21 +282,24 @@ public class FileStorageService {
         String bucket = properties.getMinioBucket();
         if (!minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build())) {
             minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
-            String publicReadPolicy = """
-                    {
-                      "Version": "2012-10-17",
-                      "Statement": [{
-                        "Effect": "Allow",
-                        "Principal": {"AWS": ["*"]},
-                        "Action": ["s3:GetObject"],
-                        "Resource": ["arn:aws:s3:::%s/*"]
-                      }]
-                    }
-                    """.formatted(bucket);
-            minioClient.setBucketPolicy(SetBucketPolicyArgs.builder()
-                    .bucket(bucket)
-                    .config(publicReadPolicy)
-                    .build());
+            // 仅在未开启预签名模式时配置只读策略；生产开启 presigned 时保持私有桶隔离
+            if (!properties.isMinioPresignedEnabled()) {
+                String publicReadPolicy = """
+                        {
+                          "Version": "2012-10-17",
+                          "Statement": [{
+                            "Effect": "Allow",
+                            "Principal": {"AWS": ["*"]},
+                            "Action": ["s3:GetObject"],
+                            "Resource": ["arn:aws:s3:::%s/*"]
+                          }]
+                        }
+                        """.formatted(bucket);
+                minioClient.setBucketPolicy(SetBucketPolicyArgs.builder()
+                        .bucket(bucket)
+                        .config(publicReadPolicy)
+                        .build());
+            }
         }
         bucketReady.set(true);
     }
@@ -194,7 +323,7 @@ public class FileStorageService {
         return name.replaceAll("[\\\\/:*?\"<>|]", "_");
     }
 
-    private String extractExtension(String fileName) {
+    public String extractExtension(String fileName) {
         int idx = fileName.lastIndexOf('.');
         if (idx > 0 && idx < fileName.length() - 1) {
             String ext = fileName.substring(idx).toLowerCase();
@@ -206,6 +335,14 @@ public class FileStorageService {
     }
 
     private FileUploadVO toVO(ImFileObject obj, boolean instantHit) {
+        String accessUrl = obj.getUrl();
+        if ("MINIO".equalsIgnoreCase(obj.getStorageType()) && properties.isMinioPresignedEnabled()) {
+            try {
+                accessUrl = resolveMinioAccessUrl(obj.getObjectKey());
+            } catch (Exception e) {
+                log.warn("生成 MinIO 预签名链接失败，回退原始 URL: key={}", obj.getObjectKey(), e);
+            }
+        }
         return FileUploadVO.builder()
                 .id(obj.getId())
                 .sha256(obj.getSha256())
@@ -213,7 +350,7 @@ public class FileStorageService {
                 .contentType(obj.getContentType())
                 .fileSize(obj.getFileSize())
                 .storageType(obj.getStorageType())
-                .url(obj.getUrl())
+                .url(accessUrl)
                 .instantHit(instantHit)
                 .build();
     }

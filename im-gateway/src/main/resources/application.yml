@@ -1,9 +1,12 @@
 server:
   port: ${GATEWAY_HTTP_PORT:8081}
+  shutdown: graceful
 
 spring:
   application:
     name: im-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
   config:
     import: optional:file:.env[.properties],optional:file:../.env[.properties]
   threads:
@@ -40,5 +43,7 @@ im:
     worker-threads: 0
     reader-idle-seconds: 60
     jwt-secret: ${JWT_SECRET:im-agent-local-dev-jwt-secret-key-32bytes!}
-    jwt-expire-seconds: 604800
+    jwt-expire-seconds: ${JWT_EXPIRE_SECONDS:604800}
     server-base-url: ${IM_SERVER_URL:http://127.0.0.1:8080}
+    internal-token: ${IM_INTERNAL_TOKEN:im-agent-local-dev-internal-token-32bytes!}
+    allow-legacy-query-token: ${GATEWAY_ALLOW_LEGACY_TOKEN:true}

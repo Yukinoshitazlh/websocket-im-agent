@@ -22,7 +22,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Netty WebSocket 服务端优雅启停骨架（实现 SmartLifecycle 与 Spring 生命周期绑定）
+ * Netty WebSocket 服务端优雅启停（与 Spring SmartLifecycle 绑定）：
+ * 停机时依次停止接收新连接 -> 排空活跃长连接并清理 Redis 路由 -> 同步等待 EventLoop 优雅关闭。
  */
 @Slf4j
 @Component
@@ -32,6 +33,7 @@ public class NettyServerBootstrap implements SmartLifecycle {
     private final GatewayProperties properties;
     private final JwtHandshakeAuthHandler jwtHandshakeAuthHandler;
     private final WsFrameDispatchHandler wsFrameDispatchHandler;
+    private final LocalChannelManager localChannelManager;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     private EventLoopGroup bossGroup;
@@ -84,14 +86,21 @@ public class NettyServerBootstrap implements SmartLifecycle {
             return;
         }
         log.info("正在优雅关闭 Netty WebSocket 网关: nodeId={}", properties.getNodeId());
-        if (serverChannel != null) {
-            serverChannel.close();
-        }
-        if (bossGroup != null) {
-            bossGroup.shutdownGracefully();
-        }
-        if (workerGroup != null) {
-            workerGroup.shutdownGracefully();
+        try {
+            if (serverChannel != null) {
+                serverChannel.close().syncUninterruptibly();
+            }
+            localChannelManager.drainAllConnections();
+        } catch (Exception e) {
+            log.warn("排空 Netty 连接期间出现异常: {}", e.getMessage());
+        } finally {
+            if (bossGroup != null) {
+                bossGroup.shutdownGracefully(1, 5, TimeUnit.SECONDS).syncUninterruptibly();
+            }
+            if (workerGroup != null) {
+                workerGroup.shutdownGracefully(1, 5, TimeUnit.SECONDS).syncUninterruptibly();
+            }
+            log.info("Netty WebSocket 网关已优雅停机: nodeId={}", properties.getNodeId());
         }
     }
 

@@ -4,11 +4,13 @@ on:
   push:
     branches:
       - main
+      - v2/production
     tags:
       - 'v*'
   pull_request:
     branches:
       - main
+      - v2/production
   workflow_dispatch:
 
 permissions:

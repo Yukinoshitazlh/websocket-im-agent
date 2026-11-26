@@ -92,4 +92,44 @@ public final class RedisKeys {
     public static String userMentionHash(Long userId) {
         return "im:unread:at:" + userId;
     }
+
+    /** 用户当前有效 JWT 版本号缓存：im:auth:tv:{userId} -> "{tokenVersion}:{status}" */
+    public static String userTokenVersion(Long userId) {
+        return "im:auth:tv:" + userId;
+    }
+
+    /** 一次性 WebSocket 握手票据（30s TTL，GETDEL 原子消费）：im:auth:ws-ticket:{ticket} -> userId */
+    public static String wsTicket(String ticket) {
+        return "im:auth:ws-ticket:" + ticket;
+    }
+
+    /** 图形验证码：im:auth:captcha:{captchaId} -> 答案 */
+    public static String captchaCode(String captchaId) {
+        return "im:auth:captcha:" + captchaId;
+    }
+
+    /** 邮箱注册验证码：im:auth:email-code:{email} -> 6位验证码 */
+    public static String emailCode(String email) {
+        return "im:auth:email-code:" + email;
+    }
+
+    /** 邮箱验证码发送冷却：im:auth:email-cd:{email} */
+    public static String emailCodeCooldown(String email) {
+        return "im:auth:email-cd:" + email;
+    }
+
+    /** 邮箱验证码试错计数：im:auth:email-try:{email} */
+    public static String emailCodeAttempts(String email) {
+        return "im:auth:email-try:" + email;
+    }
+
+    /** 登录失败计数/锁定：im:auth:login-fail:{account} */
+    public static String loginFailCount(String account) {
+        return "im:auth:login-fail:" + account;
+    }
+
+    /** 认证接口 IP 维度固定窗口限流：im:rl:ip:{action}:{ip} */
+    public static String ipRateLimit(String action, String ip) {
+        return "im:rl:ip:" + action + ":" + ip;
+    }
 }

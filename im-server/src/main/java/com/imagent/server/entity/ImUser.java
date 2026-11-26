@@ -13,6 +13,7 @@ public class ImUser {
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
     private String username;
+    private String email;
     private String passwordHash;
     private String nickname;
     private String avatar;
@@ -22,6 +23,7 @@ public class ImUser {
     private String statusText;
     private Integer userType;
     private Integer status;
+    private Integer tokenVersion;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

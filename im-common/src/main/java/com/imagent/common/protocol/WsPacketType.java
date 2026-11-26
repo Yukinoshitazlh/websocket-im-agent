@@ -26,6 +26,9 @@ public enum WsPacketType {
     AGENT_APPROVAL_CARD,
     AGENT_APPROVAL,
 
+    // 安全会话控制（改密 / 封号强制踢下线）
+    FORCE_LOGOUT,
+
     // 异常提示
     ERROR
 }

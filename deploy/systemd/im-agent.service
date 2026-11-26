@@ -1,0 +1,22 @@
+[Unit]
+Description=PulseIM Async AI Agent Worker
+After=network.target im-server.service mysql.service redis-server.service rabbitmq-server.service
+Wants=im-server.service
+
+[Service]
+Type=simple
+User=pulseim
+Group=pulseim
+WorkingDirectory=/opt/pulseim/current
+EnvironmentFile=/etc/pulseim/pulseim.env
+ExecStart=/usr/bin/java -Xms192m -Xmx384m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError \
+  -Dspring.profiles.active=prod \
+  -Dlogging.file.path=/var/log/pulseim \
+  -jar /opt/pulseim/current/im-agent.jar
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

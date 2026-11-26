@@ -1,7 +1,9 @@
 package com.imagent.gateway.netty;
 
+import com.imagent.common.constant.RedisKeys;
 import com.imagent.common.security.JwtTokenUtil;
 import com.imagent.gateway.config.GatewayProperties;
+import io.jsonwebtoken.Claims;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
@@ -15,14 +17,16 @@ import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.QueryStringDecoder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * WebSocket 握手前 JWT 鉴权处理器
- * 校验失败直接拒绝 Upgrade，防止非法连接占用服务端资源。
+ * WebSocket 握手前鉴权处理器（v2.0 加固版）：
+ * 1. 优先校验 30 秒一次性短期票据 ?ticket=...，使用 Redis GETDEL 原子消费，彻底杜绝长期 JWT 泄露进网关/Nginx 访问日志；
+ * 2. 仅在 allowLegacyQueryToken=true（本地开发/压测）时向后兼容 ?token=...，并同步校验 Redis TokenVersion 缓存。
  */
 @Slf4j
 @Component
@@ -32,6 +36,7 @@ public class JwtHandshakeAuthHandler extends ChannelInboundHandlerAdapter {
 
     private final JwtTokenUtil jwtTokenUtil;
     private final GatewayProperties properties;
+    private final StringRedisTemplate redisTemplate;
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
@@ -46,22 +51,72 @@ public class JwtHandshakeAuthHandler extends ChannelInboundHandlerAdapter {
             return;
         }
 
-        List<String> tokens = decoder.parameters().get("token");
-        if (tokens == null || tokens.isEmpty()) {
-            sendUnauthorized(ctx, request, "Missing token");
+        Long userId = null;
+        List<String> tickets = decoder.parameters().get("ticket");
+        if (tickets != null && !tickets.isEmpty() && !tickets.get(0).isBlank()) {
+            userId = consumeWsTicket(tickets.get(0).trim());
+            if (userId == null) {
+                log.warn("WebSocket 一次性票据无效或已过期");
+                sendUnauthorized(ctx, request, "Invalid or expired ws ticket");
+                return;
+            }
+        } else if (properties.isAllowLegacyQueryToken()) {
+            List<String> tokens = decoder.parameters().get("token");
+            if (tokens == null || tokens.isEmpty() || tokens.get(0).isBlank()) {
+                sendUnauthorized(ctx, request, "Missing ticket or token");
+                return;
+            }
+            userId = verifyLegacyJwt(tokens.get(0).trim());
+            if (userId == null) {
+                sendUnauthorized(ctx, request, "Invalid or expired token");
+                return;
+            }
+        } else {
+            sendUnauthorized(ctx, request, "Missing ws ticket");
             return;
         }
 
+        ctx.channel().attr(LocalChannelManager.ATTR_USER_ID).set(userId);
+        // 剥离 query 参数，确保后续 WebSocketServerProtocolHandler 精确匹配 /ws
+        request.setUri(properties.getWsPath());
+        ctx.fireChannelRead(request);
+        ctx.pipeline().remove(this);
+    }
+
+    private Long consumeWsTicket(String ticket) {
         try {
-            Long userId = jwtTokenUtil.extractUserId(tokens.get(0));
-            ctx.channel().attr(LocalChannelManager.ATTR_USER_ID).set(userId);
-            // 剥离 query 参数，确保后续 WebSocketServerProtocolHandler 精确匹配 /ws
-            request.setUri(properties.getWsPath());
-            ctx.fireChannelRead(request);
-            ctx.pipeline().remove(this);
+            String rawUserId = redisTemplate.opsForValue().getAndDelete(RedisKeys.wsTicket(ticket));
+            if (rawUserId == null || rawUserId.isBlank()) {
+                return null;
+            }
+            return Long.valueOf(rawUserId);
         } catch (Exception e) {
-            log.warn("WebSocket 握手鉴权失败: {}", e.getMessage());
-            sendUnauthorized(ctx, request, "Invalid or expired token");
+            log.warn("校验一次性 WS Ticket 失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private Long verifyLegacyJwt(String token) {
+        try {
+            Claims claims = jwtTokenUtil.parseAndValidate(token);
+            Long userId = Long.valueOf(claims.getSubject());
+            int tokenVersion = jwtTokenUtil.extractTokenVersion(claims);
+
+            String cachedState = redisTemplate.opsForValue().get(RedisKeys.userTokenVersion(userId));
+            if (cachedState != null && cachedState.contains(":")) {
+                String[] parts = cachedState.split(":", 2);
+                int currentVersion = Integer.parseInt(parts[0]);
+                int status = Integer.parseInt(parts[1]);
+                if (status != 1 || tokenVersion != currentVersion) {
+                    log.warn("拒绝已失效 Token 版本的 WS 握手: userId={}, tokenTv={}, currentTv={}, status={}",
+                            userId, tokenVersion, currentVersion, status);
+                    return null;
+                }
+            }
+            return userId;
+        } catch (Exception e) {
+            log.warn("WebSocket JWT 握手鉴权失败: {}", e.getMessage());
+            return null;
         }
     }
 

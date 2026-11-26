@@ -364,7 +364,7 @@ function previewSound() {
             </button>
           </div>
 
-          <div class="pref-row">
+          <div v-if="store.authConfig.showDemoMode" class="pref-row">
             <div class="pref-info">
               <FlaskConical :size="15" />
               <span>面试演练模式（双网关 / 断网 / 幂等）</span>
@@ -398,7 +398,7 @@ function previewSound() {
           <Transition name="slide-up">
             <div v-if="showPasswordBox" class="pwd-panel">
               <input v-model="oldPassword" type="password" class="input" placeholder="输入当前原密码" />
-              <input v-model="newPassword" type="password" class="input" placeholder="输入新密码（至少 6 位）" />
+              <input v-model="newPassword" type="password" class="input" placeholder="输入新密码（至少 8 位，含字母与数字）" />
               <input v-model="confirmPassword" type="password" class="input" placeholder="再次确认新密码" />
               <button
                 type="button"

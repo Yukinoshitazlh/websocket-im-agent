@@ -14,6 +14,7 @@ public class UserProfileVO {
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long id;
     private String username;
+    private String email;
     private String nickname;
     private String avatar;
     private String signature;

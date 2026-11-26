@@ -1,5 +1,6 @@
 package com.imagent.agent.config;
 
+import com.imagent.common.constant.InternalAuthConstants;
 import com.imagent.common.constant.MqConstants;
 import org.springframework.amqp.core.AnonymousQueue;
 import org.springframework.amqp.core.Binding;
@@ -95,6 +96,7 @@ public class AgentInfraConfig {
     public WebClient imServerWebClient(AgentProperties properties) {
         return WebClient.builder()
                 .baseUrl(properties.getServerBaseUrl())
+                .defaultHeader(InternalAuthConstants.HEADER_INTERNAL_TOKEN, properties.getInternalToken())
                 .build();
     }
 }

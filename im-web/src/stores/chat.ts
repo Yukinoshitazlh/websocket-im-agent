@@ -4,7 +4,9 @@ import type {
   AgentMetrics,
   AgentStreamState,
   ApprovalCardState,
+  AuthConfig,
   AuthResponse,
+  CaptchaResp,
   ChatMessage,
   Conversation,
   ConversationMember,
@@ -12,10 +14,12 @@ import type {
   ForwardBundleMeta,
   PinnedMessage,
   ReactionGroup,
+  SendEmailCodeResp,
   UserProfile,
-  WsPacket
+  WsPacket,
+  WsTicketResp
 } from '../types/im';
-import { apiRequest, uploadFileWithInstantCheck } from '../utils/api';
+import { apiRequest, setUnauthorizedHandler, uploadFileWithInstantCheck } from '../utils/api';
 import { cacheConversationMessages, loadCachedMessages } from '../utils/db';
 import { playMessageChime } from '../utils/sound';
 
@@ -31,14 +35,43 @@ export interface UnreadDigestState {
   count: number;
 }
 
+function isLocalDevHost(): boolean {
+  if (typeof window === 'undefined') return true;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1';
+}
+
+function resolveDefaultWsUrl(): string {
+  const configured = (import.meta as any).env?.VITE_WS_URL as string | undefined;
+  if (configured && configured.trim()) {
+    return configured.trim();
+  }
+  if (typeof window !== 'undefined' && !isLocalDevHost()) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws`;
+  }
+  return 'ws://127.0.0.1:9001/ws';
+}
+
 export const useChatStore = defineStore('chat', () => {
   const token = ref<string>(sessionStorage.getItem('im_token') || '');
   const currentUser = ref<UserProfile | null>(
     JSON.parse(sessionStorage.getItem('im_user') || 'null')
   );
-  const wsUrl = ref<string>(sessionStorage.getItem('im_ws_url') || 'ws://127.0.0.1:9001/ws');
+  const wsUrl = ref<string>(
+    isLocalDevHost()
+      ? sessionStorage.getItem('im_ws_url') || resolveDefaultWsUrl()
+      : resolveDefaultWsUrl()
+  );
+  const authConfig = ref<AuthConfig>({
+    requireCaptcha: true,
+    requireEmailCode: true,
+    inviteCodeRequired: false,
+    allowDemoQuickLogin: isLocalDevHost(),
+    showDemoMode: isLocalDevHost()
+  });
   const theme = ref<'light' | 'dark'>((localStorage.getItem('im_theme') as 'light' | 'dark') || 'light');
-  const demoMode = ref<boolean>(localStorage.getItem('im_demo_mode') === '1');
+  const demoMode = ref<boolean>(isLocalDevHost() && localStorage.getItem('im_demo_mode') === '1');
   const soundEnabled = ref<boolean>(localStorage.getItem('im_sound') !== '0');
   const viewingProfile = ref<UserProfile | null>(null);
 
@@ -46,6 +79,7 @@ export const useChatStore = defineStore('chat', () => {
   const wsStatusText = ref<string>('未连接');
   const wsRttMs = ref<number | null>(null);
   const manualOffline = ref<boolean>(false);
+  const authNotice = ref<string>('');
 
   const conversations = ref<Conversation[]>([]);
   const activeConvId = ref<string | null>(null);
@@ -89,6 +123,7 @@ export const useChatStore = defineStore('chat', () => {
   let lastTypingSentAt = 0;
   let reconnectAttempt = 0;
   let hasConnectedOnce = false;
+  let changingPassword = false;
   let toastSeq = 1;
   let hiddenUnreadCount = 0;
 
@@ -154,6 +189,11 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function toggleDemoMode() {
+    if (!authConfig.value.showDemoMode) {
+      demoMode.value = false;
+      localStorage.removeItem('im_demo_mode');
+      return;
+    }
     demoMode.value = !demoMode.value;
     localStorage.setItem('im_demo_mode', demoMode.value ? '1' : '0');
     pushToast(
@@ -161,6 +201,34 @@ export const useChatStore = defineStore('chat', () => {
         ? '已开启面试演练模式：显示双网关、断网模拟、#seq、幂等测试与 AI 观测'
         : '已切回日常纯净模式'
     );
+  }
+
+  async function loadAuthConfig() {
+    try {
+      const cfg = await apiRequest<AuthConfig>('/api/auth/config', '');
+      authConfig.value = cfg;
+      if (!cfg.showDemoMode) {
+        demoMode.value = false;
+        localStorage.removeItem('im_demo_mode');
+      }
+    } catch {
+      // keep safe defaults
+    }
+  }
+
+  async function fetchCaptcha(): Promise<CaptchaResp> {
+    return apiRequest<CaptchaResp>('/api/auth/captcha', '');
+  }
+
+  async function sendEmailCode(
+    email: string,
+    captchaId?: string,
+    captchaCode?: string
+  ): Promise<SendEmailCodeResp> {
+    return apiRequest<SendEmailCodeResp>('/api/auth/email-code', '', {
+      method: 'POST',
+      body: JSON.stringify({ email, captchaId, captchaCode })
+    });
   }
 
   function toggleSound() {
@@ -243,11 +311,32 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function changeMyPassword(oldPassword: string, newPassword: string) {
-    await apiRequest<void>('/api/users/me/password', token.value, {
-      method: 'PUT',
-      body: JSON.stringify({ oldPassword, newPassword })
-    });
-    pushToast('登录密码已更新，下次登录生效', 'success');
+    changingPassword = true;
+    try {
+      const refreshed = await apiRequest<AuthResponse>('/api/users/me/password', token.value, {
+        method: 'PUT',
+        body: JSON.stringify({ oldPassword, newPassword })
+      });
+      if (refreshed?.token) {
+        token.value = refreshed.token;
+        currentUser.value = refreshed.user;
+        sessionStorage.setItem('im_token', refreshed.token);
+        sessionStorage.setItem('im_user', JSON.stringify(refreshed.user));
+        // 用新 Token 重新签发一次性票据建立安全连接，旧端已被服务端强制下线
+        clearTimers();
+        const prev = ws;
+        ws = null;
+        prev?.close();
+        manualOffline.value = false;
+        reconnectAttempt = 0;
+        connectWs();
+      }
+      pushToast('登录密码已更新，其他设备旧会话已自动失效', 'success');
+    } finally {
+      window.setTimeout(() => {
+        changingPassword = false;
+      }, 1500);
+    }
   }
 
   function pushToast(text: string, type: 'info' | 'success' | 'error' = 'info') {
@@ -286,23 +375,47 @@ export const useChatStore = defineStore('chat', () => {
     });
   }
 
-  async function login(username: string, password: string) {
+  async function login(payload: {
+    account: string;
+    password: string;
+    captchaId?: string;
+    captchaCode?: string;
+  }) {
     const data = await apiRequest<AuthResponse>('/api/auth/login', '', {
       method: 'POST',
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({
+        account: payload.account,
+        username: payload.account,
+        password: payload.password,
+        captchaId: payload.captchaId,
+        captchaCode: payload.captchaCode
+      })
     });
     setAuthSession(data);
   }
 
-  async function register(username: string, password: string, nickname: string) {
+  async function register(payload: {
+    email: string;
+    emailCode?: string;
+    username?: string;
+    password: string;
+    nickname?: string;
+    captchaId?: string;
+    captchaCode?: string;
+    inviteCode?: string;
+  }) {
     const data = await apiRequest<AuthResponse>('/api/auth/register', '', {
       method: 'POST',
-      body: JSON.stringify({ username, password, nickname })
+      body: JSON.stringify(payload)
     });
     setAuthSession(data);
   }
 
   function setAuthSession(data: AuthResponse) {
+    authNotice.value = '';
+    manualOffline.value = false;
+    reconnectAttempt = 0;
+    hasConnectedOnce = false;
     token.value = data.token;
     currentUser.value = data.user;
     sessionStorage.setItem('im_token', data.token);
@@ -312,20 +425,37 @@ export const useChatStore = defineStore('chat', () => {
     connectWs();
   }
 
-  function logout() {
+  function logout(reason?: string) {
     manualOffline.value = true;
     clearTimers();
-    ws?.close();
+    const currentSocket = ws;
+    ws = null;
+    currentSocket?.close();
     sessionStorage.clear();
     token.value = '';
     currentUser.value = null;
+    wsState.value = 'disconnected';
+    wsStatusText.value = '未连接';
+    wsRttMs.value = null;
     conversations.value = [];
     messages.value = [];
     activeConvId.value = null;
     activeMembers.value = [];
     activePins.value = [];
     exitMultiSelect();
+    if (reason) {
+      authNotice.value = reason;
+      pushToast(reason, 'error');
+    } else {
+      authNotice.value = '';
+    }
   }
+
+  setUnauthorizedHandler((message) => {
+    if (token.value) {
+      logout(message || '你的账号已在其他设备或页面登录，当前会话已下线');
+    }
+  });
 
   function clearTimers() {
     if (heartbeatTimer) window.clearInterval(heartbeatTimer);
@@ -365,13 +495,42 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function connectWs() {
+  function formatWsLabel(url: string): string {
+    if (url.includes('9002')) return 'gateway-2 :9002';
+    if (url.includes('9001')) return 'gateway-1 :9001';
+    return '云端安全网关';
+  }
+
+  async function connectWs() {
     if (!token.value || manualOffline.value) return;
-    const label = wsUrl.value.includes('9002') ? 'gateway-2 :9002' : 'gateway-1 :9001';
+    const label = formatWsLabel(wsUrl.value);
     wsState.value = 'connecting';
     wsStatusText.value = `连接中 (${label})`;
 
-    const socket = new WebSocket(`${wsUrl.value}?token=${encodeURIComponent(token.value)}`);
+    let ticketParam: string;
+    try {
+      const resp = await apiRequest<WsTicketResp>('/api/auth/ws-ticket', token.value, {
+        method: 'POST'
+      });
+      ticketParam = `ticket=${encodeURIComponent(resp.ticket)}`;
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (msg.includes('Token') || msg.includes('失效') || msg.includes('登录') || msg.includes('禁用')) {
+        pushToast(msg || '登录状态已失效，请重新登录', 'error');
+        logout();
+        return;
+      }
+      const delaySec = Math.min(15, Math.pow(2, reconnectAttempt));
+      reconnectAttempt++;
+      wsState.value = 'connecting';
+      wsStatusText.value = `${delaySec}s 后重连`;
+      reconnectTimer = window.setTimeout(connectWs, delaySec * 1000);
+      return;
+    }
+
+    if (!token.value || manualOffline.value) return;
+    const separator = wsUrl.value.includes('?') ? '&' : '?';
+    const socket = new WebSocket(`${wsUrl.value}${separator}${ticketParam}`);
     ws = socket;
 
     socket.onopen = async () => {
@@ -396,11 +555,17 @@ export const useChatStore = defineStore('chat', () => {
       }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (ws !== socket) return;
       if (heartbeatTimer) window.clearInterval(heartbeatTimer);
       wsRttMs.value = null;
       if (manualOffline.value) return;
+
+      // 4001 表示被同账号新登录或新页面顶下线：直接退出到登录页，绝不重连死循环
+      if (event.code === 4001) {
+        logout('你的账号已在其他设备或页面登录，当前会话已下线');
+        return;
+      }
 
       const delaySec = Math.min(15, Math.pow(2, reconnectAttempt));
       reconnectAttempt++;
@@ -468,6 +633,12 @@ export const useChatStore = defineStore('chat', () => {
         break;
       case 'AGENT_APPROVAL_CARD':
         onAgentApprovalCard(pkt.data);
+        break;
+      case 'FORCE_LOGOUT':
+        if (changingPassword && pkt.data?.reason === 'PASSWORD_CHANGED') {
+          break;
+        }
+        logout(pkt.data?.message || '你的账号已在其他设备或页面登录，当前会话已下线');
         break;
       case 'ERROR':
         pushToast(pkt.data?.message || '操作失败', 'error');
@@ -1347,6 +1518,8 @@ export const useChatStore = defineStore('chat', () => {
     loadAgentMetrics();
   }
 
+  loadAuthConfig();
+
   if (token.value && currentUser.value) {
     loadDraftsFromStorage();
     refreshMyProfile();
@@ -1358,6 +1531,7 @@ export const useChatStore = defineStore('chat', () => {
     token,
     currentUser,
     wsUrl,
+    authConfig,
     theme,
     demoMode,
     soundEnabled,
@@ -1366,6 +1540,7 @@ export const useChatStore = defineStore('chat', () => {
     wsStatusText,
     wsRttMs,
     manualOffline,
+    authNotice,
     conversations,
     activeConvId,
     activeConversation,
@@ -1398,6 +1573,9 @@ export const useChatStore = defineStore('chat', () => {
     toggleTheme,
     toggleDemoMode,
     toggleSound,
+    loadAuthConfig,
+    fetchCaptcha,
+    sendEmailCode,
     openProfile,
     uploadAvatarFile,
     updateMyProfile,

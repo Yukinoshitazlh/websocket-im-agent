@@ -28,5 +28,6 @@ dist/
 *.docx
 ~$*
 
-# Local fallback file uploads
+# Local fallback file uploads and rolling logs
 uploads/
+logs/

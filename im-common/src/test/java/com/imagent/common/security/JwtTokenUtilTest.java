@@ -13,5 +13,14 @@ class JwtTokenUtilTest {
         String token = jwtTokenUtil.generateToken(2001L, "alice");
         assertNotNull(token);
         assertEquals(2001L, jwtTokenUtil.extractUserId(token));
+        assertEquals(1, jwtTokenUtil.extractTokenVersion(token));
+    }
+
+    @Test
+    void shouldEmbedAndExtractCustomTokenVersion() {
+        JwtTokenUtil jwtTokenUtil = new JwtTokenUtil("im-agent-local-dev-jwt-secret-key-32bytes!", 3600);
+        String token = jwtTokenUtil.generateToken(2002L, "bob", 5);
+        assertEquals(2002L, jwtTokenUtil.extractUserId(token));
+        assertEquals(5, jwtTokenUtil.extractTokenVersion(token));
     }
 }

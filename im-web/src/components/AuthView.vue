@@ -1,49 +1,187 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { ArrowRight, Eye, EyeOff, Lock, Moon, Smile, Sun, User } from 'lucide-vue-next';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Lock,
+  Mail,
+  Moon,
+  RefreshCw,
+  ShieldCheck,
+  Smile,
+  Sun,
+  Ticket,
+  User
+} from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import { vGlow } from '../directives/glow';
 
 const store = useChatStore();
 
 const mode = ref<'login' | 'register'>('login');
+const account = ref('');
+const email = ref('');
+const emailCode = ref('');
 const username = ref('');
 const password = ref('');
 const nickname = ref('');
+const inviteCode = ref('');
+const captchaId = ref('');
+const captchaSvg = ref('');
+const captchaCode = ref('');
+
 const showPwd = ref(false);
 const loading = ref(false);
+const sendingCode = ref(false);
+const cooldown = ref(0);
 const errorMsg = ref('');
+const infoMsg = ref('');
+
+let cooldownTimer: number | null = null;
+
+async function refreshCaptcha() {
+  if (!store.authConfig.requireCaptcha) {
+    captchaId.value = '';
+    captchaSvg.value = '';
+    return;
+  }
+  try {
+    const res = await store.fetchCaptcha();
+    captchaId.value = res.captchaId;
+    captchaSvg.value = res.svgDataUri;
+    captchaCode.value = '';
+  } catch {
+    // ignore transient captcha fetch error
+  }
+}
+
+function switchMode(next: 'login' | 'register') {
+  mode.value = next;
+  errorMsg.value = '';
+  infoMsg.value = '';
+  refreshCaptcha();
+}
+
+function startCooldown(seconds: number) {
+  cooldown.value = seconds;
+  if (cooldownTimer) window.clearInterval(cooldownTimer);
+  cooldownTimer = window.setInterval(() => {
+    cooldown.value--;
+    if (cooldown.value <= 0 && cooldownTimer) {
+      window.clearInterval(cooldownTimer);
+      cooldownTimer = null;
+    }
+  }, 1000);
+}
+
+async function handleSendEmailCode() {
+  errorMsg.value = '';
+  infoMsg.value = '';
+  const trimmedEmail = email.value.trim();
+  if (!trimmedEmail || !trimmedEmail.includes('@')) {
+    errorMsg.value = '请先输入正确的邮箱地址';
+    return;
+  }
+  if (store.authConfig.requireCaptcha && !captchaCode.value.trim()) {
+    errorMsg.value = '请先输入上方图形验证码再获取邮箱验证码';
+    return;
+  }
+  sendingCode.value = true;
+  try {
+    const res = await store.sendEmailCode(trimmedEmail, captchaId.value, captchaCode.value.trim());
+    startCooldown(res.cooldownSeconds || 60);
+    if (res.devCodeHint) {
+      infoMsg.value = `本地开发模式未配置 SMTP，测试验证码：${res.devCodeHint}`;
+    } else {
+      infoMsg.value = '验证码已发送至你的邮箱，10 分钟内有效';
+    }
+    refreshCaptcha();
+  } catch (e: any) {
+    errorMsg.value = e.message || '发送验证码失败';
+    refreshCaptcha();
+  } finally {
+    sendingCode.value = false;
+  }
+}
 
 function fillQuick(user: string) {
   mode.value = 'login';
-  username.value = user;
+  account.value = user;
   password.value = '123456';
   errorMsg.value = '';
+  infoMsg.value = '';
 }
 
 async function handleSubmit() {
   errorMsg.value = '';
-  if (!username.value.trim() || !password.value.trim()) {
-    errorMsg.value = '请输入用户名和密码';
-    return;
-  }
+  infoMsg.value = '';
   loading.value = true;
   try {
     if (mode.value === 'login') {
-      await store.login(username.value.trim(), password.value);
+      if (!account.value.trim() || !password.value.trim()) {
+        errorMsg.value = '请输入邮箱或用户名和密码';
+        return;
+      }
+      if (store.authConfig.requireCaptcha && !captchaCode.value.trim()) {
+        errorMsg.value = '请输入图形验证码';
+        return;
+      }
+      await store.login({
+        account: account.value.trim(),
+        password: password.value,
+        captchaId: captchaId.value,
+        captchaCode: captchaCode.value.trim()
+      });
     } else {
-      await store.register(
-        username.value.trim(),
-        password.value,
-        nickname.value.trim() || username.value.trim()
-      );
+      if (!email.value.trim() || !email.value.includes('@')) {
+        errorMsg.value = '请输入有效的邮箱地址';
+        return;
+      }
+      if (store.authConfig.requireEmailCode && !emailCode.value.trim()) {
+        errorMsg.value = '请输入 6 位邮箱验证码';
+        return;
+      }
+      if (!store.authConfig.requireEmailCode && store.authConfig.requireCaptcha && !captchaCode.value.trim()) {
+        errorMsg.value = '请输入图形验证码';
+        return;
+      }
+      if (password.value.length < 8) {
+        errorMsg.value = '密码长度至少 8 位，需包含字母和数字';
+        return;
+      }
+      if (store.authConfig.inviteCodeRequired && !inviteCode.value.trim()) {
+        errorMsg.value = '当前为内测阶段，请输入内测邀请码';
+        return;
+      }
+      await store.register({
+        email: email.value.trim(),
+        emailCode: emailCode.value.trim() || undefined,
+        username: username.value.trim() || undefined,
+        password: password.value,
+        nickname: nickname.value.trim() || undefined,
+        captchaId: captchaId.value || undefined,
+        captchaCode: captchaCode.value.trim() || undefined,
+        inviteCode: inviteCode.value.trim() || undefined
+      });
     }
   } catch (e: any) {
     errorMsg.value = e.message || '认证失败';
+    refreshCaptcha();
   } finally {
     loading.value = false;
   }
 }
+
+onMounted(async () => {
+  await store.loadAuthConfig();
+  await refreshCaptcha();
+});
+
+onBeforeUnmount(() => {
+  if (cooldownTimer) window.clearInterval(cooldownTimer);
+});
 </script>
 
 <template>
@@ -62,8 +200,14 @@ async function handleSubmit() {
       <header class="auth-header">
         <div class="brand-logo">P</div>
         <h1 class="brand-name">PulseIM</h1>
-        <p class="brand-tip">{{ mode === 'login' ? '欢迎回来' : '创建你的账号' }}</p>
+        <p class="brand-tip">{{ mode === 'login' ? '欢迎回来，安全登录工作台' : '使用邮箱创建你的账号' }}</p>
       </header>
+
+      <Transition name="slide-up">
+        <div v-if="store.authNotice" class="kick-banner">
+          {{ store.authNotice }}
+        </div>
+      </Transition>
 
       <div class="tab-bar">
         <span class="tab-slider" :class="{ right: mode === 'register' }" />
@@ -71,7 +215,7 @@ async function handleSubmit() {
           type="button"
           class="tab-btn"
           :class="{ active: mode === 'login' }"
-          @click="mode = 'login'; errorMsg = ''"
+          @click="switchMode('login')"
         >
           登录
         </button>
@@ -79,43 +223,92 @@ async function handleSubmit() {
           type="button"
           class="tab-btn"
           :class="{ active: mode === 'register' }"
-          @click="mode = 'register'; errorMsg = ''"
+          @click="switchMode('register')"
         >
-          注册
+          邮箱注册
         </button>
       </div>
 
       <form class="auth-form" @submit.prevent="handleSubmit">
-        <div class="input-wrap">
+        <!-- 登录：邮箱或用户名 -->
+        <div v-if="mode === 'login'" class="input-wrap">
           <User :size="15" class="field-icon" />
           <input
-            v-model="username"
+            v-model="account"
             class="input with-icon"
-            placeholder="用户名"
+            placeholder="邮箱或用户名"
             autocomplete="username"
             autofocus
           />
         </div>
 
-        <Transition name="slide-up">
-          <div v-if="mode === 'register'" class="input-wrap">
-            <Smile :size="15" class="field-icon" />
+        <!-- 注册：邮箱地址 -->
+        <div v-if="mode === 'register'" class="input-wrap">
+          <Mail :size="15" class="field-icon" />
+          <input
+            v-model="email"
+            type="email"
+            class="input with-icon"
+            placeholder="邮箱地址"
+            autocomplete="email"
+            autofocus
+          />
+        </div>
+
+        <!-- 图形验证码（登录或发送邮箱验证码防刷） -->
+        <div v-if="store.authConfig.requireCaptcha" class="captcha-row">
+          <div class="input-wrap flex-1">
+            <ShieldCheck :size="15" class="field-icon" />
             <input
-              v-model="nickname"
+              v-model="captchaCode"
               class="input with-icon"
-              placeholder="昵称（可选）"
+              placeholder="图形验证码"
+              maxlength="6"
+              autocomplete="off"
             />
           </div>
-        </Transition>
+          <button
+            type="button"
+            class="captcha-box"
+            title="点击刷新验证码"
+            @click="refreshCaptcha"
+          >
+            <img v-if="captchaSvg" :src="captchaSvg" alt="图形验证码" />
+            <RefreshCw v-else :size="15" />
+          </button>
+        </div>
 
+        <!-- 注册：邮箱验证码 -->
+        <div v-if="mode === 'register' && store.authConfig.requireEmailCode" class="captcha-row">
+          <div class="input-wrap flex-1">
+            <KeyRound :size="15" class="field-icon" />
+            <input
+              v-model="emailCode"
+              class="input with-icon"
+              placeholder="6 位邮箱验证码"
+              maxlength="6"
+              autocomplete="one-time-code"
+            />
+          </div>
+          <button
+            type="button"
+            class="btn btn-ghost send-code-btn"
+            :disabled="sendingCode || cooldown > 0"
+            @click="handleSendEmailCode"
+          >
+            {{ cooldown > 0 ? `${cooldown}s` : sendingCode ? '发送中' : '获取验证码' }}
+          </button>
+        </div>
+
+        <!-- 密码 -->
         <div class="input-wrap">
           <Lock :size="15" class="field-icon" />
           <input
             v-model="password"
             :type="showPwd ? 'text' : 'password'"
             class="input with-icon with-eye"
-            placeholder="密码"
-            autocomplete="current-password"
+            :placeholder="mode === 'register' ? '密码（至少 8 位，含字母与数字）' : '密码'"
+            :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
           />
           <button
             type="button"
@@ -128,18 +321,54 @@ async function handleSubmit() {
           </button>
         </div>
 
+        <!-- 注册附加信息：昵称 & 可选用户名 -->
+        <div v-if="mode === 'register'" class="split-row">
+          <div class="input-wrap flex-1">
+            <Smile :size="15" class="field-icon" />
+            <input
+              v-model="nickname"
+              class="input with-icon"
+              placeholder="昵称（可选）"
+            />
+          </div>
+          <div class="input-wrap flex-1">
+            <User :size="15" class="field-icon" />
+            <input
+              v-model="username"
+              class="input with-icon"
+              placeholder="用户名（可选）"
+            />
+          </div>
+        </div>
+
+        <!-- 可选内测邀请码 -->
+        <div v-if="mode === 'register' && store.authConfig.inviteCodeRequired" class="input-wrap">
+          <Ticket :size="15" class="field-icon" />
+          <input
+            v-model="inviteCode"
+            class="input with-icon"
+            placeholder="内测邀请码"
+            autocomplete="off"
+          />
+        </div>
+
+        <Transition name="slide-up">
+          <div v-if="infoMsg" :key="infoMsg" class="info-box">{{ infoMsg }}</div>
+        </Transition>
+
         <Transition name="slide-up">
           <div v-if="errorMsg" :key="errorMsg" class="error-box">{{ errorMsg }}</div>
         </Transition>
 
         <button type="submit" class="btn btn-primary submit-btn" :disabled="loading">
-          <span>{{ loading ? '请稍候...' : mode === 'login' ? '登录' : '注册' }}</span>
+          <span>{{ loading ? '请稍候...' : mode === 'login' ? '登录' : '创建账号' }}</span>
           <ArrowRight v-if="!loading" :size="15" />
         </button>
       </form>
 
-      <footer class="quick-row">
-        <span class="quick-label">快捷体验</span>
+      <!-- 仅在开发环境 allowDemoQuickLogin=true 时展示快捷演示入口 -->
+      <footer v-if="store.authConfig.allowDemoQuickLogin" class="quick-row">
+        <span class="quick-label">本地快捷体验</span>
         <div class="quick-links">
           <button type="button" class="quick-btn" @click="fillQuick('alice')">Alice</button>
           <button type="button" class="quick-btn" @click="fillQuick('bob')">Bob</button>
@@ -169,12 +398,12 @@ async function handleSubmit() {
 
 .auth-card {
   width: 100%;
-  max-width: 388px;
-  padding: 36px 30px 26px;
+  max-width: 416px;
+  padding: 34px 30px 26px;
   border-radius: 28px;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
   animation: rise-in 0.8s var(--ease-out) both;
 }
 
@@ -270,7 +499,50 @@ async function handleSubmit() {
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 11px;
+}
+
+.captcha-row,
+.split-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flex-1 {
+  flex: 1;
+  min-width: 0;
+}
+
+.captcha-box {
+  width: 118px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.captcha-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.send-code-btn {
+  height: 40px;
+  min-width: 104px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  font-size: 12.5px;
+  padding: 0 12px;
 }
 
 .input-wrap {
@@ -313,6 +585,30 @@ async function handleSubmit() {
 
 .eye-btn:hover {
   color: var(--ink);
+}
+
+.info-box {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(58, 107, 255, 0.1);
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+.kick-banner {
+  padding: 9px 12px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #b45309;
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+[data-theme='dark'] .kick-banner {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.16);
 }
 
 .error-box {

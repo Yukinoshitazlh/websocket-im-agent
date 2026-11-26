@@ -99,9 +99,20 @@ node scripts/load-test.mjs --users=200 --msgs=5 --ws=ws://127.0.0.1:9001/ws,ws:/
 
 ---
 
-## CI/CD 自动化构建与发版
+## CI/CD 自动化构建与生产零 Docker 部署（v2.0）
 
-仓库已集成轻量级 **GitHub Actions** 流水线（[.github/workflows/ci.yml](.github/workflows/ci.yml)），无需额外配置 Docker 或外部中间件即可运行：
+仓库在 `v2/production` 分支完成了公网安全上线改造（保留本地 `docker-compose.yml` 用于 Windows 快速联调，生产服务器全程零 Docker）：
 
-1. **PR / Push 质量门禁**：自动执行 `im-web` 依赖安装、`vue-tsc` 静态类型检查与 Vite 构建（同步产物至 `im-server` 静态目录）→ JDK 21 运行全模块单元测试（`mvn -B test`）→ 打包 `im-server`、`im-gateway`、`im-agent` 三个可执行 Fat JAR 并生成 `SHA256SUMS.txt` 归档。
-2. **Tag 自动发版**：推送语义化版本标签（如 `git tag v1.0.0 && git push origin v1.0.0`）后，自动创建 GitHub Release 并附带构建产物、校验文件与自动生成的变更说明。
+1. **安全基线加固（P0）**：
+   - `/internal/**` 内部接口强制校验共享密钥 `X-Internal-Token` 且 Nginx 显式返回 `403`；
+   - 文件上传实行扩展名白名单 + 文件头魔数校验，`/uploads/**` 统一输出 `nosniff` 与 `sandbox` CSP 防同源 XSS，MinIO 支持私有桶预签名访问；
+   - Markdown 渲染拦截 `javascript:` 等危险 URL 协议；
+   - 支持**邮箱注册 + 邮箱验证码 + 纯 Java SVG 图形验证码 + IP 限流 + 可选内测邀请码 + 登录失败锁定**；改密递增 `token_version` 并下发 `FORCE_LOGOUT` 踢下线旧连接；
+   - WebSocket 握手采用 30 秒一次性短期票据（`POST /api/auth/ws-ticket` + Redis `GETDEL` 原子消费），前端自动适配线上 `wss://<host>/ws` 并隐藏面试演练模式。
+2. **数据库演进与运维（P2）**：
+   - 集成 **Flyway**（`im-server/src/main/resources/db/migration/`），服务启动自动演进表结构；
+   - 三模块内置 `application-prod.yml`（禁止生产缺省弱密钥）与 `logback-spring.xml`（50MB/14天/1GB 日志轮转上限），Netty 网关优雅停机自动排空连接与清理路由；
+   - `deploy/` 目录提供 Ubuntu 22.04/24.04 一键原生安装脚本（`setup-ubuntu.sh`）、`systemd` 多网关模板、Nginx HTTPS/WSS 模板、MySQL 自动备份脚本及带 `/actuator/health` 探活与失败自动回滚的原子发布脚本（`deploy.sh`）。
+3. **CI/CD 流水线**：
+   - [.github/workflows/ci.yml](.github/workflows/ci.yml)：每次 Push / PR 自动完成前端 `vue-tsc` + `vite build`、JDK 21 全模块单测与 Fat JAR 打包；推送 `v*` 标签自动发布 GitHub Release；
+   - [.github/workflows/deploy.yml](.github/workflows/deploy.yml)：配置仓库 Secrets（`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`）后，支持手动一键或 `v2.*` 标签全自动滚动上线。

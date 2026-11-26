@@ -1,46 +1,52 @@
 package com.imagent.server.config;
 
+import com.imagent.server.common.InternalAuthInterceptor;
 import com.imagent.server.common.JwtAuthInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
-import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-import java.nio.file.Path;
+import java.util.List;
 
 @Configuration
 @RequiredArgsConstructor
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final JwtAuthInterceptor jwtAuthInterceptor;
-    private final StorageProperties storageProperties;
+    private final InternalAuthInterceptor internalAuthInterceptor;
+    private final ServerSecurityProperties securityProperties;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // 1. 内部服务调用强鉴权（拦截 /internal/**）
+        registry.addInterceptor(internalAuthInterceptor)
+                .addPathPatterns("/internal/**");
+
+        // 2. 用户 HTTP 接口 JWT + TokenVersion 鉴权（显式白名单放行公开接口，/api/auth/ws-ticket 需鉴权）
         registry.addInterceptor(jwtAuthInterceptor)
                 .addPathPatterns("/api/**")
                 .excludePathPatterns(
-                        "/api/auth/**",
-                        "/api/health/**",
-                        "/internal/**"
+                        "/api/auth/config",
+                        "/api/auth/captcha",
+                        "/api/auth/email-code",
+                        "/api/auth/register",
+                        "/api/auth/login",
+                        "/api/health/**"
                 );
     }
 
     @Override
-    public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        String localUploadsUri = Path.of(storageProperties.getLocalDir()).toAbsolutePath().normalize().toUri().toString();
-        registry.addResourceHandler("/uploads/**")
-                .addResourceLocations(localUploadsUri.endsWith("/") ? localUploadsUri : (localUploadsUri + "/"));
-    }
-
-    @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/**")
-                .allowedOriginPatterns("*")
+        List<String> origins = securityProperties.resolveCorsAllowedOriginList();
+        if (origins.isEmpty()) {
+            return;
+        }
+        registry.addMapping("/api/**")
+                .allowedOrigins(origins.toArray(String[]::new))
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                .allowedHeaders("*")
+                .allowedHeaders("Authorization", "Content-Type", "X-Requested-With")
                 .allowCredentials(false)
                 .maxAge(3600);
     }

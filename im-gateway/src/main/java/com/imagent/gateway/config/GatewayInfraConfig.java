@@ -1,5 +1,6 @@
 package com.imagent.gateway.config;
 
+import com.imagent.common.constant.InternalAuthConstants;
 import com.imagent.common.constant.MqConstants;
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
@@ -78,6 +79,7 @@ public class GatewayInfraConfig {
     public RestClient imServerRestClient(GatewayProperties properties, CloseableHttpClient internalHttpClient) {
         return RestClient.builder()
                 .baseUrl(properties.getServerBaseUrl())
+                .defaultHeader(InternalAuthConstants.HEADER_INTERNAL_TOKEN, properties.getInternalToken())
                 .requestFactory(new HttpComponentsClientHttpRequestFactory(internalHttpClient))
                 .build();
     }

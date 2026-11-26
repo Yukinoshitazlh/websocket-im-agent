@@ -1,0 +1,22 @@
+[Unit]
+Description=PulseIM Core IM Server
+After=network.target mysql.service redis-server.service rabbitmq-server.service
+Wants=mysql.service redis-server.service rabbitmq-server.service
+
+[Service]
+Type=simple
+User=pulseim
+Group=pulseim
+WorkingDirectory=/opt/pulseim/current
+EnvironmentFile=/etc/pulseim/pulseim.env
+ExecStart=/usr/bin/java -Xms256m -Xmx512m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError \
+  -Dspring.profiles.active=prod \
+  -Dlogging.file.path=/var/log/pulseim \
+  -jar /opt/pulseim/current/im-server.jar
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

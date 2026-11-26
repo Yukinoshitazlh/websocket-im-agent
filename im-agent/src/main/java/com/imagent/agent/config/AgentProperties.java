@@ -16,4 +16,6 @@ public class AgentProperties {
     private int stepTimeoutSeconds = 30;
     private String qdrantUrl = "http://127.0.0.1:6333";
     private String serverBaseUrl = "http://127.0.0.1:8080";
+    /** 调用 im-server /internal/** 接口的共享密钥 */
+    private String internalToken = "im-agent-local-dev-internal-token-32bytes!";
 }

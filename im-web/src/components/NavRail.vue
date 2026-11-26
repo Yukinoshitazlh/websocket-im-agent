@@ -128,6 +128,7 @@ onUnmounted(() => {
           </button>
 
           <button
+            v-if="store.authConfig.showDemoMode"
             type="button"
             class="set-item"
             @click="store.toggleDemoMode()"

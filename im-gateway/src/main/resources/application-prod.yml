@@ -1,0 +1,24 @@
+# 网关生产环境配置（--spring.profiles.active=prod）
+# 强制关闭 URL ?token= 长期 JWT 兼容，仅允许 30 秒一次性 WS Ticket 握手。
+
+server:
+  address: ${GATEWAY_HTTP_BIND_ADDRESS:127.0.0.1}
+
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+  rabbitmq:
+    host: ${RABBITMQ_HOST}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
+
+im:
+  gateway:
+    jwt-secret: ${JWT_SECRET}
+    internal-token: ${IM_INTERNAL_TOKEN}
+    server-base-url: ${IM_SERVER_URL:http://127.0.0.1:8080}
+    allow-legacy-query-token: false
