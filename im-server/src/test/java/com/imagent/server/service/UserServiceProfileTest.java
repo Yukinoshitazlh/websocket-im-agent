@@ -8,6 +8,7 @@ import com.imagent.server.config.ServerSecurityProperties;
 import com.imagent.server.dto.AuthResponse;
 import com.imagent.server.dto.ChangePasswordRequest;
 import com.imagent.server.dto.LoginRequest;
+import com.imagent.server.dto.UpdateEmailRequest;
 import com.imagent.server.dto.UpdateProfileRequest;
 import com.imagent.server.dto.UserProfileVO;
 import com.imagent.server.entity.ImUser;
@@ -160,5 +161,54 @@ class UserServiceProfileTest {
         ArgumentCaptor<WsPacket<?>> packetCaptor = ArgumentCaptor.forClass(WsPacket.class);
         verify(messagePushHelper).pushSync(eq(List.of(3004L)), packetCaptor.capture());
         assertEquals(WsPacketType.FORCE_LOGOUT, packetCaptor.getValue().getType());
+    }
+
+    @Test
+    void shouldBindOrChangeEmailAfterPasswordAndCodeVerification() {
+        ImUser user = new ImUser();
+        user.setId(3005L);
+        user.setUsername("001");
+        user.setEmail(null);
+        user.setStatus(1);
+        user.setUserType(1);
+        user.setPasswordHash(passwordEncoder.encode("Pulse2026"));
+
+        when(userMapper.selectById(3005L)).thenReturn(user);
+        when(authSecurityService.normalizeEmail("NewUser@Example.COM")).thenReturn("newuser@example.com");
+        when(userMapper.selectCount(any())).thenReturn(0L);
+
+        UpdateEmailRequest req = new UpdateEmailRequest();
+        req.setEmail("NewUser@Example.COM");
+        req.setEmailCode("654321");
+        req.setCurrentPassword("Pulse2026");
+
+        UserProfileVO vo = userService.updateEmail(3005L, req);
+
+        assertEquals("newuser@example.com", vo.getEmail());
+        verify(authSecurityService).verifyEmailCode("newuser@example.com", "654321");
+        verify(userMapper).updateById(any(ImUser.class));
+    }
+
+    @Test
+    void shouldRejectUpdateEmailWhenOccupiedOrWrongPassword() {
+        ImUser user = new ImUser();
+        user.setId(3006L);
+        user.setUsername("002");
+        user.setPasswordHash(passwordEncoder.encode("Pulse2026"));
+        when(userMapper.selectById(3006L)).thenReturn(user);
+
+        UpdateEmailRequest badPwd = new UpdateEmailRequest();
+        badPwd.setEmail("taken@example.com");
+        badPwd.setEmailCode("123456");
+        badPwd.setCurrentPassword("WrongPass1");
+        assertThrows(BizException.class, () -> userService.updateEmail(3006L, badPwd));
+
+        when(authSecurityService.normalizeEmail("taken@example.com")).thenReturn("taken@example.com");
+        when(userMapper.selectCount(any())).thenReturn(1L);
+        UpdateEmailRequest occupied = new UpdateEmailRequest();
+        occupied.setEmail("taken@example.com");
+        occupied.setEmailCode("123456");
+        occupied.setCurrentPassword("Pulse2026");
+        assertThrows(BizException.class, () -> userService.updateEmail(3006L, occupied));
     }
 }

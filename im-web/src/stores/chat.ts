@@ -310,6 +310,30 @@ export const useChatStore = defineStore('chat', () => {
     pushToast('个人资料已保存', 'success');
   }
 
+  async function sendBindEmailCode(email: string): Promise<SendEmailCodeResp> {
+    return apiRequest<SendEmailCodeResp>('/api/users/me/email/code', token.value, {
+      method: 'POST',
+      body: JSON.stringify({ email })
+    });
+  }
+
+  async function updateMyEmail(payload: {
+    email: string;
+    emailCode?: string;
+    currentPassword: string;
+  }) {
+    const updated = await apiRequest<UserProfile>('/api/users/me/email', token.value, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    currentUser.value = updated;
+    sessionStorage.setItem('im_user', JSON.stringify(updated));
+    if (viewingProfile.value && String(viewingProfile.value.id) === String(updated.id)) {
+      viewingProfile.value = updated;
+    }
+    pushToast('绑定邮箱已更新', 'success');
+  }
+
   async function changeMyPassword(oldPassword: string, newPassword: string) {
     changingPassword = true;
     try {
@@ -1579,6 +1603,8 @@ export const useChatStore = defineStore('chat', () => {
     openProfile,
     uploadAvatarFile,
     updateMyProfile,
+    sendBindEmailCode,
+    updateMyEmail,
     changeMyPassword,
     pushToast,
     flashHighlightSeq,

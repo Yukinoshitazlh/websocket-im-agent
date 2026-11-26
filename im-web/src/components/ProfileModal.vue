@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import {
   Camera,
   Check,
   ChevronDown,
   ChevronUp,
   Copy,
+  Eye,
+  EyeOff,
   FlaskConical,
   KeyRound,
+  Mail,
   MessageCircle,
   Moon,
   RotateCcw,
@@ -53,10 +56,27 @@ const formStatusText = ref('');
 
 const uploadingAvatar = ref(false);
 const savingProfile = ref(false);
+
+// 添加/更换绑定邮箱状态
+const showEmailBox = ref(false);
+const formEmail = ref('');
+const emailVerifyCode = ref('');
+const emailCurrentPwd = ref('');
+const showEmailPwd = ref(false);
+const sendingEmailCode = ref(false);
+const emailCooldown = ref(0);
+const emailDevHint = ref('');
+const savingEmail = ref(false);
+let emailCooldownTimer: number | null = null;
+
+// 修改登录密码状态（每个输入框独立显隐开关）
 const showPasswordBox = ref(false);
 const oldPassword = ref('');
 const newPassword = ref('');
 const confirmPassword = ref('');
+const showOldPwd = ref(false);
+const showNewPwd = ref(false);
+const showConfirmPwd = ref(false);
 const savingPassword = ref(false);
 
 const avatarInputRef = ref<HTMLInputElement | null>(null);
@@ -70,13 +90,26 @@ watch(
     formBio.value = p.bio || '';
     formStatusEmoji.value = p.statusEmoji || '';
     formStatusText.value = p.statusText || '';
+    showEmailBox.value = false;
+    formEmail.value = '';
+    emailVerifyCode.value = '';
+    emailCurrentPwd.value = '';
+    showEmailPwd.value = false;
+    emailDevHint.value = '';
     showPasswordBox.value = false;
     oldPassword.value = '';
     newPassword.value = '';
     confirmPassword.value = '';
+    showOldPwd.value = false;
+    showNewPwd.value = false;
+    showConfirmPwd.value = false;
   },
   { immediate: true }
 );
+
+onBeforeUnmount(() => {
+  if (emailCooldownTimer) window.clearInterval(emailCooldownTimer);
+});
 
 function pickStatusPreset(emoji: string, text: string) {
   formStatusEmoji.value = emoji;
@@ -142,13 +175,82 @@ async function handleSaveProfile() {
   }
 }
 
+function startEmailCooldown(seconds: number) {
+  emailCooldown.value = seconds;
+  if (emailCooldownTimer) window.clearInterval(emailCooldownTimer);
+  emailCooldownTimer = window.setInterval(() => {
+    emailCooldown.value--;
+    if (emailCooldown.value <= 0 && emailCooldownTimer) {
+      window.clearInterval(emailCooldownTimer);
+      emailCooldownTimer = null;
+    }
+  }, 1000);
+}
+
+async function handleSendBindEmailCode() {
+  const email = formEmail.value.trim();
+  if (!email || !email.includes('@')) {
+    store.pushToast('请先输入正确的邮箱地址', 'error');
+    return;
+  }
+  sendingEmailCode.value = true;
+  emailDevHint.value = '';
+  try {
+    const res = await store.sendBindEmailCode(email);
+    startEmailCooldown(res.cooldownSeconds || 60);
+    if (res.devCodeHint) {
+      emailDevHint.value = `本地开发模式未配置 SMTP，测试验证码：${res.devCodeHint}`;
+    } else {
+      store.pushToast('验证码已发送至新邮箱，10 分钟内有效', 'success');
+    }
+  } catch (err: any) {
+    store.pushToast(err.message || '发送验证码失败', 'error');
+  } finally {
+    sendingEmailCode.value = false;
+  }
+}
+
+async function handleUpdateEmail() {
+  const email = formEmail.value.trim();
+  if (!email || !email.includes('@')) {
+    store.pushToast('请输入正确的邮箱地址', 'error');
+    return;
+  }
+  if (store.authConfig.requireEmailCode && !emailVerifyCode.value.trim()) {
+    store.pushToast('请输入 6 位邮箱验证码', 'error');
+    return;
+  }
+  if (!emailCurrentPwd.value) {
+    store.pushToast('请输入当前登录密码以验证身份', 'error');
+    return;
+  }
+  savingEmail.value = true;
+  try {
+    await store.updateMyEmail({
+      email,
+      emailCode: emailVerifyCode.value.trim() || undefined,
+      currentPassword: emailCurrentPwd.value
+    });
+    formEmail.value = '';
+    emailVerifyCode.value = '';
+    emailCurrentPwd.value = '';
+    emailDevHint.value = '';
+    showEmailPwd.value = false;
+    showEmailBox.value = false;
+  } catch (err: any) {
+    store.pushToast(err.message || '更新邮箱失败', 'error');
+  } finally {
+    savingEmail.value = false;
+  }
+}
+
 async function handleChangePassword() {
   if (!oldPassword.value || !newPassword.value) {
     store.pushToast('请填写原密码与新密码', 'error');
     return;
   }
-  if (newPassword.value.length < 6) {
-    store.pushToast('新密码长度至少为 6 位', 'error');
+  if (newPassword.value.length < 8) {
+    store.pushToast('新密码长度至少 8 位，且需包含字母与数字', 'error');
     return;
   }
   if (newPassword.value !== confirmPassword.value) {
@@ -161,6 +263,9 @@ async function handleChangePassword() {
     oldPassword.value = '';
     newPassword.value = '';
     confirmPassword.value = '';
+    showOldPwd.value = false;
+    showNewPwd.value = false;
+    showConfirmPwd.value = false;
     showPasswordBox.value = false;
   } catch (err: any) {
     store.pushToast(err.message || '修改密码失败', 'error');
@@ -380,6 +485,87 @@ function previewSound() {
           </div>
         </section>
 
+        <!-- 折叠式：添加 / 更换绑定邮箱 -->
+        <section class="section">
+          <button
+            type="button"
+            class="collapse-head"
+            @click="showEmailBox = !showEmailBox"
+          >
+            <span class="collapse-left">
+              <Mail :size="14" />
+              <span>{{ profile.email ? '更换绑定邮箱' : '添加绑定邮箱' }}</span>
+            </span>
+            <span class="collapse-right">
+              <span class="email-badge" :class="{ empty: !profile.email }">
+                {{ profile.email || '未绑定' }}
+              </span>
+              <ChevronUp v-if="showEmailBox" :size="15" />
+              <ChevronDown v-else :size="15" />
+            </span>
+          </button>
+
+          <Transition name="slide-up">
+            <div v-if="showEmailBox" class="pwd-panel">
+              <input
+                v-model="formEmail"
+                type="email"
+                class="input"
+                :placeholder="profile.email ? '输入要更换的新邮箱地址' : '输入要绑定的邮箱地址'"
+                autocomplete="email"
+              />
+
+              <div v-if="store.authConfig.requireEmailCode" class="email-code-row">
+                <input
+                  v-model="emailVerifyCode"
+                  class="input flex-1"
+                  maxlength="6"
+                  placeholder="输入 6 位邮箱验证码"
+                  autocomplete="one-time-code"
+                />
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs send-email-btn"
+                  :disabled="sendingEmailCode || emailCooldown > 0"
+                  @click="handleSendBindEmailCode"
+                >
+                  {{ emailCooldown > 0 ? `${emailCooldown}s` : sendingEmailCode ? '发送中' : '获取验证码' }}
+                </button>
+              </div>
+
+              <div v-if="emailDevHint" class="dev-code-tip">{{ emailDevHint }}</div>
+
+              <div class="pwd-input-wrap">
+                <input
+                  v-model="emailCurrentPwd"
+                  :type="showEmailPwd ? 'text' : 'password'"
+                  class="input with-eye"
+                  placeholder="输入当前登录密码验证身份"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="pwd-eye-btn"
+                  :title="showEmailPwd ? '隐藏密码' : '显示密码'"
+                  @click="showEmailPwd = !showEmailPwd"
+                >
+                  <EyeOff v-if="showEmailPwd" :size="15" />
+                  <Eye v-else :size="15" />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs"
+                :disabled="savingEmail"
+                @click="handleUpdateEmail"
+              >
+                {{ savingEmail ? '提交中...' : profile.email ? '确认更换邮箱' : '确认绑定邮箱' }}
+              </button>
+            </div>
+          </Transition>
+        </section>
+
         <!-- 折叠式：修改登录密码 -->
         <section class="section">
           <button
@@ -397,9 +583,63 @@ function previewSound() {
 
           <Transition name="slide-up">
             <div v-if="showPasswordBox" class="pwd-panel">
-              <input v-model="oldPassword" type="password" class="input" placeholder="输入当前原密码" />
-              <input v-model="newPassword" type="password" class="input" placeholder="输入新密码（至少 8 位，含字母与数字）" />
-              <input v-model="confirmPassword" type="password" class="input" placeholder="再次确认新密码" />
+              <div class="pwd-input-wrap">
+                <input
+                  v-model="oldPassword"
+                  :type="showOldPwd ? 'text' : 'password'"
+                  class="input with-eye"
+                  placeholder="输入当前原密码"
+                  autocomplete="current-password"
+                />
+                <button
+                  type="button"
+                  class="pwd-eye-btn"
+                  :title="showOldPwd ? '隐藏密码' : '显示密码'"
+                  @click="showOldPwd = !showOldPwd"
+                >
+                  <EyeOff v-if="showOldPwd" :size="15" />
+                  <Eye v-else :size="15" />
+                </button>
+              </div>
+
+              <div class="pwd-input-wrap">
+                <input
+                  v-model="newPassword"
+                  :type="showNewPwd ? 'text' : 'password'"
+                  class="input with-eye"
+                  placeholder="输入新密码（至少 8 位，含字母与数字）"
+                  autocomplete="new-password"
+                />
+                <button
+                  type="button"
+                  class="pwd-eye-btn"
+                  :title="showNewPwd ? '隐藏密码' : '显示密码'"
+                  @click="showNewPwd = !showNewPwd"
+                >
+                  <EyeOff v-if="showNewPwd" :size="15" />
+                  <Eye v-else :size="15" />
+                </button>
+              </div>
+
+              <div class="pwd-input-wrap">
+                <input
+                  v-model="confirmPassword"
+                  :type="showConfirmPwd ? 'text' : 'password'"
+                  class="input with-eye"
+                  placeholder="再次确认新密码"
+                  autocomplete="new-password"
+                />
+                <button
+                  type="button"
+                  class="pwd-eye-btn"
+                  :title="showConfirmPwd ? '隐藏密码' : '显示密码'"
+                  @click="showConfirmPwd = !showConfirmPwd"
+                >
+                  <EyeOff v-if="showConfirmPwd" :size="15" />
+                  <Eye v-else :size="15" />
+                </button>
+              </div>
+
               <button
                 type="button"
                 class="btn btn-ghost btn-xs"
@@ -448,7 +688,6 @@ function previewSound() {
         </div>
 
         <div v-if="profile.userType !== 2" class="modal-footer">
-          <button type="button" class="btn btn-ghost" @click="emit('close')">关闭</button>
           <button type="button" class="btn btn-primary" @click="startDirectChat">
             <MessageCircle :size="15" />
             <span>发消息</span>
@@ -784,6 +1023,52 @@ function previewSound() {
   gap: 7px;
 }
 
+.collapse-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.email-badge {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.email-badge.empty {
+  color: var(--ink-muted);
+}
+
+.email-code-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flex-1 {
+  flex: 1;
+  min-width: 0;
+}
+
+.send-email-btn {
+  flex-shrink: 0;
+  min-width: 92px;
+  height: 36px;
+}
+
+.dev-code-tip {
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+}
+
 .pwd-panel {
   display: flex;
   flex-direction: column;
@@ -792,6 +1077,41 @@ function previewSound() {
   border-radius: 12px;
   background: var(--surface);
   border: 1px solid var(--border);
+}
+
+.pwd-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pwd-input-wrap .input {
+  width: 100%;
+}
+
+.pwd-input-wrap .with-eye {
+  padding-right: 36px;
+}
+
+.pwd-eye-btn {
+  position: absolute;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.18s, background 0.18s;
+}
+
+.pwd-eye-btn:hover {
+  color: var(--ink);
+  background: var(--hover);
 }
 
 .card-info-list {

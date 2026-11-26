@@ -12,6 +12,8 @@ import com.imagent.server.dto.AuthResponse;
 import com.imagent.server.dto.ChangePasswordRequest;
 import com.imagent.server.dto.LoginRequest;
 import com.imagent.server.dto.RegisterRequest;
+import com.imagent.server.dto.SendEmailCodeVO;
+import com.imagent.server.dto.UpdateEmailRequest;
 import com.imagent.server.dto.UpdateProfileRequest;
 import com.imagent.server.dto.UserProfileVO;
 import com.imagent.server.entity.ImUser;
@@ -208,6 +210,63 @@ public class UserService {
         if (req.getAvatar() != null) {
             redisTemplate.opsForValue().set(RedisKeys.userAvatar(userId), Objects.requireNonNullElse(user.getAvatar(), ""), PROFILE_CACHE_TTL);
         }
+        return toVO(user, true);
+    }
+
+    /**
+     * 已登录用户发送绑定/更换邮箱验证码（前置校验邮箱未被其他账号占用）
+     */
+    public SendEmailCodeVO sendBindEmailCode(Long userId, String rawEmail, String clientIp) {
+        ImUser user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        String email = authSecurityService.normalizeEmail(rawEmail);
+        if (email.equalsIgnoreCase(Objects.requireNonNullElse(user.getEmail(), ""))) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "新邮箱与当前已绑定邮箱相同");
+        }
+        Long occupied = userMapper.selectCount(new LambdaQueryWrapper<ImUser>()
+                .eq(ImUser::getEmail, email)
+                .ne(ImUser::getId, userId));
+        if (occupied > 0) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "该邮箱已被其他账号绑定");
+        }
+        return authSecurityService.sendBindEmailCode(email, clientIp);
+    }
+
+    /**
+     * 添加或更换绑定邮箱（校验当前登录密码 + 邮箱验证码 + 邮箱唯一性）
+     */
+    public UserProfileVO updateEmail(Long userId, UpdateEmailRequest req) {
+        ImUser user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "用户不存在");
+        }
+        if (!passwordEncoder.matches(req.getCurrentPassword(), user.getPasswordHash())) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "当前登录密码不正确");
+        }
+
+        String email = authSecurityService.normalizeEmail(req.getEmail());
+        if (email.equalsIgnoreCase(Objects.requireNonNullElse(user.getEmail(), ""))) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "新邮箱与当前已绑定邮箱相同");
+        }
+        Long occupied = userMapper.selectCount(new LambdaQueryWrapper<ImUser>()
+                .eq(ImUser::getEmail, email)
+                .ne(ImUser::getId, userId));
+        if (occupied > 0) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "该邮箱已被其他账号绑定");
+        }
+
+        if (securityProperties.getAuth().isRequireEmailCode()) {
+            authSecurityService.verifyEmailCode(email, req.getEmailCode());
+        }
+
+        ImUser update = new ImUser();
+        update.setId(userId);
+        update.setEmail(email);
+        userMapper.updateById(update);
+        user.setEmail(email);
+
         return toVO(user, true);
     }
 

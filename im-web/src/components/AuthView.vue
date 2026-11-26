@@ -571,20 +571,23 @@ onBeforeUnmount(() => {
 
 .eye-btn {
   position: absolute;
-  right: 10px;
+  right: 7px;
+  width: 28px;
+  height: 28px;
   border: none;
+  border-radius: 8px;
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-secondary);
   cursor: pointer;
-  padding: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.18s;
+  transition: color 0.18s, background 0.18s;
 }
 
 .eye-btn:hover {
   color: var(--ink);
+  background: var(--hover);
 }
 
 .info-box {

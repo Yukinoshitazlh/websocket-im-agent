@@ -9,6 +9,7 @@
 }
 
 :root {
+  color-scheme: light;
   --canvas: #E6ECF6;
   --surface: rgba(255, 255, 255, 0.56);
   --surface-strong: rgba(255, 255, 255, 0.86);
@@ -66,6 +67,7 @@
 }
 
 :root[data-theme="dark"] {
+  color-scheme: dark;
   --canvas: #050912;
   --surface: rgba(28, 38, 62, 0.48);
   --surface-strong: rgba(20, 28, 46, 0.9);
@@ -128,6 +130,12 @@ html { transition: background-color 0.5s var(--ease-out); }
 button, input, textarea, select {
   font-family: inherit;
   font-size: inherit;
+}
+
+/* 隐藏 Windows Edge/IE 原生密码框黑色小眼睛，统一使用适配浅色/深色主题的自定义切换按钮 */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
 }
 
 ::selection { background: rgba(91, 130, 255, 0.28); }

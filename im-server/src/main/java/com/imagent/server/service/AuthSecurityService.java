@@ -107,13 +107,34 @@ public class AuthSecurityService {
     }
 
     /**
+     * 已登录用户绑定/更换邮箱时发送 6 位验证码（走 IP 限流 + 60 秒冷却，无需重复填图形验证码）
+     */
+    public SendEmailCodeVO sendBindEmailCode(String rawEmail, String clientIp) {
+        ServerSecurityProperties.AuthPolicy auth = securityProperties.getAuth();
+        checkIpRateLimit("email_code", clientIp, auth.getIpEmailCodeMaxPerHour(), Duration.ofHours(1));
+        return dispatchEmailCode(
+                rawEmail,
+                "【PulseIM】绑定 / 更换邮箱验证码",
+                "您正在 PulseIM 绑定或更换账号邮箱，本次验证码为："
+        );
+    }
+
+    /**
      * 发送邮箱 6 位验证码（先做 IP 限流 + 图形验证码校验 + 60 秒邮箱冷却）
      */
     public SendEmailCodeVO sendEmailVerificationCode(String rawEmail, String captchaId, String captchaCode, String clientIp) {
         ServerSecurityProperties.AuthPolicy auth = securityProperties.getAuth();
         checkIpRateLimit("email_code", clientIp, auth.getIpEmailCodeMaxPerHour(), Duration.ofHours(1));
         verifyCaptcha(captchaId, captchaCode);
+        return dispatchEmailCode(
+                rawEmail,
+                "【PulseIM】邮箱注册验证码",
+                "您正在注册 PulseIM 账号，本次验证码为："
+        );
+    }
 
+    private SendEmailCodeVO dispatchEmailCode(String rawEmail, String subject, String bodyPrefix) {
+        ServerSecurityProperties.AuthPolicy auth = securityProperties.getAuth();
         String email = normalizeEmail(rawEmail);
         String cooldownKey = RedisKeys.emailCodeCooldown(email);
         Boolean acquired = redisTemplate.opsForValue().setIfAbsent(cooldownKey, "1", EMAIL_COOLDOWN);
@@ -136,18 +157,18 @@ public class AuthSecurityService {
                 SimpleMailMessage msg = new SimpleMailMessage();
                 msg.setFrom(auth.getMailFrom());
                 msg.setTo(email);
-                msg.setSubject("【PulseIM】邮箱注册验证码");
-                msg.setText("您好！\n\n您正在注册 PulseIM 账号，本次验证码为：" + code
+                msg.setSubject(subject);
+                msg.setText("您好！\n\n" + bodyPrefix + code
                         + "\n\n验证码 10 分钟内有效，请勿泄露给他人。如非本人操作请忽略本邮件。");
                 sender.send(msg);
-                log.info("已向邮箱 {} 发送注册验证码", maskEmail(email));
+                log.info("已向邮箱 {} 发送验证码: subject={}", maskEmail(email), subject);
             } catch (Exception e) {
                 redisTemplate.delete(cooldownKey);
-                log.error("发送注册验证码邮件失败: email={}", maskEmail(email), e);
+                log.error("发送验证码邮件失败: email={}", maskEmail(email), e);
                 throw new BizException(ErrorCode.INTERNAL_ERROR, "发送邮件失败，请稍后重试或检查邮箱地址");
             }
         } else {
-            log.info("[DEV 邮件模拟] 注册验证码已生成 -> email={}, code={} (10分钟有效)", email, code);
+            log.info("[DEV 邮件模拟] 验证码已生成 -> email={}, code={} (10分钟有效)", email, code);
             if (auth.isDevExposeEmailCode()) {
                 devHint = code;
             }
