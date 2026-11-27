@@ -11,11 +11,17 @@ import com.imagent.server.config.ServerSecurityProperties;
 import com.imagent.server.dto.ResetPasswordRequest;
 import com.imagent.server.dto.UpdateUserLlmConfigRequest;
 import com.imagent.server.dto.UserLlmConfigVO;
+import com.imagent.server.entity.ImConversation;
+import com.imagent.server.entity.ImConversationMember;
 import com.imagent.server.entity.ImFriendship;
+import com.imagent.server.entity.ImGroupJoinRequest;
 import com.imagent.server.entity.ImUser;
 import com.imagent.server.entity.ImUserLlmConfig;
+import com.imagent.server.mapper.ImConversationMapper;
+import com.imagent.server.mapper.ImConversationMemberMapper;
 import com.imagent.server.mapper.ImFriendRequestMapper;
 import com.imagent.server.mapper.ImFriendshipMapper;
+import com.imagent.server.mapper.ImGroupJoinRequestMapper;
 import com.imagent.server.mapper.ImUserLlmConfigMapper;
 import com.imagent.server.mapper.ImUserMapper;
 import org.junit.jupiter.api.Test;
@@ -23,6 +29,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -49,9 +56,16 @@ class V21ProductFeaturesTest {
     @Mock private ImUserLlmConfigMapper llmConfigMapper;
     @Mock private ImFriendshipMapper friendshipMapper;
     @Mock private ImFriendRequestMapper friendRequestMapper;
+    @Mock private ImConversationMapper conversationMapper;
+    @Mock private ImConversationMemberMapper conversationMemberMapper;
+    @Mock private ImGroupJoinRequestMapper groupJoinRequestMapper;
     @Mock private ImUserMapper userMapper;
+    @Mock private UserService mockUserService;
+    @Mock private FriendService mockFriendService;
+    @Mock private UnreadService mockUnreadService;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
+    @Mock private SetOperations<String, String> setOps;
     @Mock private MessagePushHelper messagePushHelper;
     @Mock private JwtTokenUtil jwtTokenUtil;
     @Mock private AuthSecurityService authSecurityService;
@@ -191,5 +205,55 @@ class V21ProductFeaturesTest {
         verify(messagePushHelper).pushSync(eq(List.of(4001L)), packetCaptor.capture());
         assertEquals(WsPacketType.FORCE_LOGOUT, packetCaptor.getValue().getType());
         verify(jwtTokenUtil, never()).generateToken(any(), any(), eq(3));
+    }
+
+    @Test
+    void groupJoinApprovalShouldQueuePendingRequestForMemberAndEnforceAdminForAnnouncement() {
+        ConversationService service = new ConversationService(
+                conversationMapper, conversationMemberMapper, groupJoinRequestMapper,
+                userMapper, mockUserService, mockFriendService, mockUnreadService,
+                messagePushHelper, redisTemplate
+        );
+
+        ImConversation group = new ImConversation();
+        group.setId(5001L);
+        group.setType(2);
+        group.setTitle("My family");
+        group.setJoinApprovalRequired(1);
+        group.setOwnerId(1001L);
+
+        ImConversationMember normalMember = new ImConversationMember();
+        normalMember.setConversationId(5001L);
+        normalMember.setUserId(1002L);
+        normalMember.setRole(1);
+
+        ImConversationMember ownerMember = new ImConversationMember();
+        ownerMember.setConversationId(5001L);
+        ownerMember.setUserId(1001L);
+        ownerMember.setRole(3);
+
+        ImUser invitee = new ImUser();
+        invitee.setId(1003L);
+        invitee.setNickname("Charlie");
+
+        when(conversationMapper.selectById(5001L)).thenReturn(group);
+        when(conversationMemberMapper.selectOne(any())).thenReturn(normalMember);
+        when(redisTemplate.opsForSet()).thenReturn(setOps);
+        when(setOps.members(anyString())).thenReturn(java.util.Set.of("1001", "1002"));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(invitee));
+        when(mockUserService.getNicknameCached(1002L)).thenReturn("Bob");
+        when(groupJoinRequestMapper.selectList(any())).thenReturn(List.of());
+        when(conversationMemberMapper.selectList(any())).thenReturn(List.of(ownerMember));
+
+        ConversationService.InviteGroupOutcome outcome =
+                service.inviteGroupMembers(1002L, 5001L, List.of(1003L));
+        assertEquals(0, outcome.result().getJoinedCount());
+        assertEquals(1, outcome.result().getPendingApprovalCount());
+        verify(groupJoinRequestMapper).insert(any(ImGroupJoinRequest.class));
+        verify(conversationMemberMapper, never()).insert(any(ImConversationMember.class));
+
+        BizException annEx = assertThrows(BizException.class,
+                () -> service.updateGroupAnnouncement(1002L, 5001L, "新公告"));
+        assertEquals(ErrorCode.FORBIDDEN.getCode(), annEx.getCode());
     }
 }

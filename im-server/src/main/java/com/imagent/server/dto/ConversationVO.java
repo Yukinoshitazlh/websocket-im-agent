@@ -15,6 +15,14 @@ public class ConversationVO {
     private Long id;
     private Integer type;
     private String title;
+    private String groupRemark;
+    private String announcement;
+    private Long announcementUpdatedAt;
+    private String announcementPublisher;
+    private Boolean joinApprovalRequired;
+    private String myGroupNickname;
+    private Boolean showMemberNickname;
+    private Integer pendingJoinRequestCount;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long ownerId;
     private Long currentSeq;

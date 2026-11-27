@@ -18,6 +18,7 @@ import {
 } from 'lucide-vue-next';
 import { useChatStore } from '../stores/chat';
 import { vGlow } from '../directives/glow';
+import BrandLogo from './BrandLogo.vue';
 
 const store = useChatStore();
 
@@ -235,8 +236,8 @@ onBeforeUnmount(() => {
 
     <div v-glow class="auth-card glass">
       <header class="auth-header">
-        <div class="brand-logo">P</div>
-        <h1 class="brand-name">PulseIM</h1>
+        <div class="brand-logo"><BrandLogo :size="56" /></div>
+        <h1 class="brand-name">脉信<span class="brand-en">PulseIM</span></h1>
         <p class="brand-tip">
           {{
             mode === 'login'
@@ -510,13 +511,10 @@ onBeforeUnmount(() => {
 }
 
 .brand-logo {
-  width: 50px;
-  height: 50px;
+  width: 56px;
+  height: 56px;
   border-radius: 16px;
-  background: var(--accent-grad);
-  color: #fff;
-  font-weight: 800;
-  font-size: 24px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -526,14 +524,27 @@ onBeforeUnmount(() => {
 }
 
 @keyframes logo-breathe {
-  0%, 100% { transform: translateY(0) rotate(0); border-radius: 16px; }
-  50% { transform: translateY(-3px) rotate(-3deg); border-radius: 19px 14px 18px 15px; }
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-3px) rotate(-3deg); }
 }
 
 .brand-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: 22px;
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0.04em;
+}
+
+.brand-en {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .brand-tip {

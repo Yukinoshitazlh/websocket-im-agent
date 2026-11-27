@@ -56,7 +56,7 @@ const unreadMembers = computed(() =>
               <UserAvatar :name="m.nickname" :seed="m.username" :src="m.avatar" :online="m.online" size="sm" />
               <div class="person-meta">
                 <strong>{{ m.nickname }}</strong>
-                <small class="tabular">已读至 #{{ m.lastReadSeq }}</small>
+                <small>已读</small>
               </div>
             </div>
             <div v-if="readMembers.length === 0" class="empty-col">暂无人已读</div>

@@ -75,6 +75,14 @@ export interface Conversation {
   id: string;
   type: number; // 1=单聊, 2=群聊
   title: string;
+  groupRemark?: string;
+  announcement?: string;
+  announcementUpdatedAt?: number | null;
+  announcementPublisher?: string;
+  joinApprovalRequired?: boolean;
+  myGroupNickname?: string;
+  showMemberNickname?: boolean;
+  pendingJoinRequestCount?: number;
   ownerId?: string | null;
   currentSeq: number;
   lastReadSeq: number;
@@ -96,6 +104,7 @@ export interface ConversationMember {
   userId: string;
   username: string;
   nickname: string;
+  groupNickname?: string;
   avatar?: string;
   signature?: string;
   statusEmoji?: string;
@@ -103,6 +112,25 @@ export interface ConversationMember {
   role: number; // 1=普通成员, 2=管理员, 3=群主
   online: boolean;
   lastReadSeq: number;
+}
+
+export interface GroupJoinRequestItem {
+  id: string;
+  conversationId: string;
+  inviterId: string;
+  inviterNickname: string;
+  inviteeId: string;
+  inviteeUsername: string;
+  inviteeNickname: string;
+  inviteeAvatar: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: number;
+}
+
+export interface InviteMembersResult {
+  joinedCount: number;
+  pendingApprovalCount: number;
+  message: string;
 }
 
 export interface ReactionGroup {

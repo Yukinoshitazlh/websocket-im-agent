@@ -15,6 +15,7 @@ public class ConversationMemberVO {
     private Long userId;
     private String username;
     private String nickname;
+    private String groupNickname;
     private String avatar;
     private String signature;
     private String statusEmoji;

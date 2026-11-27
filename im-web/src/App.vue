@@ -189,10 +189,11 @@ const mentionOptions = computed<MentionOption[]>(() => {
   }
   for (const m of store.activeMembers) {
     if (String(m.userId) === String(store.currentUser?.id)) continue;
+    const displayName = (m.groupNickname && m.groupNickname.trim()) || m.nickname;
     list.push({
       id: String(m.userId),
-      label: m.nickname,
-      insertText: `@${m.nickname} `,
+      label: displayName,
+      insertText: `@${displayName} `,
       sub: `@${m.username}`,
       online: m.online
     });
@@ -220,6 +221,18 @@ function toggleDrawerTab(tab: 'metrics' | 'group' | 'search') {
     return;
   }
   openDrawerTab(tab);
+}
+
+function handleHeaderMoreClick() {
+  showEmojiPicker.value = false;
+  showAiMenu.value = false;
+  showAllPins.value = false;
+  if (store.activeConversation?.type === 2) {
+    showChatMenu.value = false;
+    toggleDrawerTab('group');
+    return;
+  }
+  showChatMenu.value = !showChatMenu.value;
 }
 
 function openMsgContextMenu(ev: MouseEvent, msg: ChatMessage) {
@@ -704,7 +717,7 @@ function handleAiSummarizeSelected() {
                   <span class="conv-heading">{{ store.activeConversation.title }}</span>
                 </button>
                 <h2 v-else :key="'g-' + store.activeConversation.id" class="conv-heading">
-                  {{ store.activeConversation.title }}
+                  {{ store.activeConversation.groupRemark || store.activeConversation.title }}
                 </h2>
               </Transition>
 
@@ -740,7 +753,7 @@ function handleAiSummarizeSelected() {
                 </span>
               </Transition>
             </template>
-            <h2 v-else class="conv-heading muted">PulseIM</h2>
+            <h2 v-else class="conv-heading muted">脉信 PulseIM</h2>
           </div>
 
           <div v-if="store.activeConversation" class="header-right">
@@ -754,20 +767,32 @@ function handleAiSummarizeSelected() {
               </span>
             </Transition>
 
-            <!-- 右上角统一集成功能按钮（查找聊天记录 / 群管理 / 置顶 / 免打扰 / 演练模式 AI 观测） -->
+            <!-- 右上角按钮：群聊直接展开微信风格群信息抽屉，单聊打开会话快捷菜单 -->
             <div class="chat-menu-wrap" @click.stop>
               <button
                 type="button"
-                class="btn-icon"
-                :class="{ 'is-active': showChatMenu }"
-                title="会话设置与更多功能"
-                @click="showChatMenu = !showChatMenu; showEmojiPicker = false; showAiMenu = false; showAllPins = false"
+                class="btn-icon header-more-btn"
+                :class="{
+                  'is-active':
+                    store.activeConversation.type === 2
+                      ? showInspector && currentDrawerTab === 'group'
+                      : showChatMenu
+                }"
+                :title="store.activeConversation.type === 2 ? '群聊信息' : '会话设置与更多功能'"
+                @click="handleHeaderMoreClick"
               >
                 <MoreHorizontal :size="18" />
+                <span
+                  v-if="
+                    store.activeConversation.type === 2 &&
+                    (store.activeConversation.pendingJoinRequestCount || 0) > 0
+                  "
+                  class="header-more-dot"
+                />
               </button>
 
               <Transition name="pop">
-                <div v-if="showChatMenu" class="chat-menu-popover glass-strong">
+                <div v-if="showChatMenu && store.activeConversation.type !== 2" class="chat-menu-popover glass-strong">
                   <button
                     type="button"
                     class="ctx-item"
@@ -967,6 +992,7 @@ function handleAiSummarizeSelected() {
                 :message="msg"
                 :is-mine="msg.senderId === store.currentUser.id"
                 :is-group="store.activeConversation.type === 2"
+                :show-member-nickname="store.activeConversation.showMemberNickname !== false"
                 :demo-mode="store.demoMode"
                 :grouped="!shouldShowDivider(idx) && idx !== firstUnreadIndex && isGroupedMessage(idx)"
                 :members="store.activeMembers"

@@ -13,6 +13,8 @@ import type {
   FileMeta,
   ForwardBundleMeta,
   FriendRequestItem,
+  GroupJoinRequestItem,
+  InviteMembersResult,
   PinnedMessage,
   ReactionGroup,
   SendEmailCodeResp,
@@ -98,6 +100,7 @@ export const useChatStore = defineStore('chat', () => {
   const activeConvId = ref<string | null>(null);
   const activeMembers = ref<ConversationMember[]>([]);
   const activePins = ref<PinnedMessage[]>([]);
+  const activeJoinRequests = ref<GroupJoinRequestItem[]>([]);
   const messages = ref<ChatMessage[]>([]);
   const hasMoreHistory = ref<boolean>(true);
   const loadingOlder = ref<boolean>(false);
@@ -579,8 +582,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     document.title =
       hiddenUnreadCount > 0
-        ? `(${hiddenUnreadCount}) 新消息 - PulseIM`
-        : 'PulseIM — 分布式即时通信与 AI 协同工作台';
+        ? `(${hiddenUnreadCount}) 新消息 - 脉信`
+        : '脉信 PulseIM — 即时通信与 AI 协同工作台';
   }
 
   if (typeof document !== 'undefined') {
@@ -666,6 +669,7 @@ export const useChatStore = defineStore('chat', () => {
     activeConvId.value = null;
     activeMembers.value = [];
     activePins.value = [];
+    activeJoinRequests.value = [];
     exitMultiSelect();
     if (reason) {
       authNotice.value = reason;
@@ -940,18 +944,95 @@ export const useChatStore = defineStore('chat', () => {
 
   async function updateConvPreferences(
     convId: string,
-    prefs: { pinned?: boolean; muted?: boolean }
+    prefs: {
+      pinned?: boolean;
+      muted?: boolean;
+      groupRemark?: string;
+      groupNickname?: string;
+      showMemberNickname?: boolean;
+    }
   ) {
     await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/preferences`, token.value, {
       method: 'POST',
       body: JSON.stringify(prefs)
     });
     await loadConversations();
+    if (prefs.groupNickname !== undefined && activeConvId.value === convId) {
+      await loadActiveMembers(convId);
+    }
     if (prefs.pinned !== undefined) {
       pushToast(prefs.pinned ? '已置顶会话' : '已取消置顶', 'success');
     } else if (prefs.muted !== undefined) {
       pushToast(prefs.muted ? '已开启消息免打扰' : '已关闭消息免打扰', 'success');
+    } else if (prefs.groupRemark !== undefined) {
+      pushToast(prefs.groupRemark.trim() ? '群聊备注已保存（仅自己可见）' : '已清空群聊备注', 'success');
+    } else if (prefs.groupNickname !== undefined) {
+      pushToast(prefs.groupNickname.trim() ? '本群昵称已更新' : '已恢复默认昵称', 'success');
+    } else if (prefs.showMemberNickname !== undefined) {
+      pushToast(prefs.showMemberNickname ? '已开启显示群成员昵称' : '已隐藏群成员昵称');
     }
+  }
+
+  async function updateGroupAnnouncement(convId: string, announcement: string) {
+    await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/announcement`, token.value, {
+      method: 'PUT',
+      body: JSON.stringify({ announcement })
+    });
+    await loadConversations();
+    pushToast(announcement.trim() ? '群公告已发布并通知全群成员' : '群公告已清空', 'success');
+  }
+
+  async function updateGroupSettings(convId: string, settings: { joinApprovalRequired?: boolean }) {
+    await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/settings`, token.value, {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    });
+    await loadConversations();
+    if (settings.joinApprovalRequired !== undefined) {
+      pushToast(
+        settings.joinApprovalRequired
+          ? '已开启「进群需要群主/群管理员确认」'
+          : '已关闭进群确认',
+        'success'
+      );
+    }
+  }
+
+  async function loadActiveJoinRequests(convId: string) {
+    if (!token.value) return;
+    try {
+      const list = await apiRequest<GroupJoinRequestItem[]>(
+        `/api/conversations/${encodeURIComponent(convId)}/join-requests`,
+        token.value
+      );
+      if (activeConvId.value === convId) {
+        activeJoinRequests.value = list;
+      }
+    } catch {
+      if (activeConvId.value === convId) {
+        activeJoinRequests.value = [];
+      }
+    }
+  }
+
+  async function approveJoinRequest(convId: string, requestId: string) {
+    await apiRequest<void>(
+      `/api/conversations/${encodeURIComponent(convId)}/join-requests/${encodeURIComponent(requestId)}/approve`,
+      token.value,
+      { method: 'POST' }
+    );
+    await Promise.all([loadActiveJoinRequests(convId), loadActiveMembers(convId), loadConversations()]);
+    pushToast('已同意入群申请', 'success');
+  }
+
+  async function rejectJoinRequest(convId: string, requestId: string) {
+    await apiRequest<void>(
+      `/api/conversations/${encodeURIComponent(convId)}/join-requests/${encodeURIComponent(requestId)}/reject`,
+      token.value,
+      { method: 'POST' }
+    );
+    await Promise.all([loadActiveJoinRequests(convId), loadConversations()]);
+    pushToast('已拒绝入群申请');
   }
 
   async function markConvAsReadManual(convId: string) {
@@ -963,13 +1044,22 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function inviteGroupMembers(convId: string, memberIds: string[]) {
-    await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/members`, token.value, {
-      method: 'POST',
-      body: JSON.stringify({ memberIds })
-    });
+    const res = await apiRequest<InviteMembersResult>(
+      `/api/conversations/${encodeURIComponent(convId)}/members`,
+      token.value,
+      {
+        method: 'POST',
+        body: JSON.stringify({ memberIds })
+      }
+    );
     await loadActiveMembers(convId);
     await loadConversations();
-    pushToast('已邀请新成员入群', 'success');
+    if (res?.pendingApprovalCount > 0 && res.joinedCount === 0) {
+      pushToast(res.message || '已提交入群申请，等待群主或群管理员确认', 'info');
+    } else {
+      pushToast(res?.message || '已邀请新成员入群', 'success');
+    }
+    return res;
   }
 
   async function kickGroupMember(convId: string, targetUserId: string) {
@@ -1035,6 +1125,7 @@ export const useChatStore = defineStore('chat', () => {
     syncNotice.value = '';
     activeMembers.value = [];
     activePins.value = [];
+    activeJoinRequests.value = [];
     exitMultiSelect();
 
     // 并行拉取成员（含在线绿点与已读水位）和置顶消息
@@ -1675,10 +1766,17 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function onConvUpdate(data: { conversationId: string }) {
+  function onConvUpdate(data: { conversationId: string; eventType?: string }) {
     loadConversations();
     if (String(data.conversationId) === activeConvId.value) {
       loadActiveMembers(activeConvId.value);
+      if (
+        data.eventType === 'JOIN_REQUEST_CREATED' ||
+        data.eventType === 'JOIN_REQUEST_REVIEWED' ||
+        data.eventType === 'MEMBERS_CHANGED'
+      ) {
+        loadActiveJoinRequests(activeConvId.value);
+      }
     }
   }
 
@@ -1777,7 +1875,7 @@ export const useChatStore = defineStore('chat', () => {
       pushToast(text, 'info');
       if (document.hidden && desktopNotifyEnabled.value) {
         showDesktopNotification({
-          title: '新的好友申请 · PulseIM',
+          title: '新的好友申请 - 脉信',
           body: text,
           tag: 'friend-request',
           onClick: () => setNavTab('contacts')
@@ -1825,6 +1923,7 @@ export const useChatStore = defineStore('chat', () => {
     activeConversation,
     activeMembers,
     activePins,
+    activeJoinRequests,
     messages,
     hasMoreHistory,
     loadingOlder,
@@ -1891,6 +1990,11 @@ export const useChatStore = defineStore('chat', () => {
     startDirect,
     createGroup,
     updateConvPreferences,
+    updateGroupAnnouncement,
+    updateGroupSettings,
+    loadActiveJoinRequests,
+    approveJoinRequest,
+    rejectJoinRequest,
     markConvAsReadManual,
     inviteGroupMembers,
     kickGroupMember,

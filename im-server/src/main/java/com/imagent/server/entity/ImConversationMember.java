@@ -18,5 +18,8 @@ public class ImConversationMember {
     private Long lastReadSeq;
     private Integer muted;
     private Integer pinned;
+    private String groupRemark;
+    private String groupNickname;
+    private Integer showMemberNickname;
     private LocalDateTime joinedAt;
 }

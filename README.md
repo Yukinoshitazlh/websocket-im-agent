@@ -1,4 +1,4 @@
-# PulseIM — 分布式 WebSocket 即时聊天 + AI Agent 协同系统
+# 脉信 PulseIM — 分布式 WebSocket 即时聊天 + AI Agent 协同系统
 
 [![CI & Release](https://github.com/Yukinoshitazlh/websocket-im-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Yukinoshitazlh/websocket-im-agent/actions/workflows/ci.yml)
 

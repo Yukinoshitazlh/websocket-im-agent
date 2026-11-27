@@ -26,6 +26,7 @@ const props = defineProps<{
   message: ChatMessage;
   isMine: boolean;
   isGroup: boolean;
+  showMemberNickname?: boolean;
   demoMode: boolean;
   grouped: boolean;
   members: ConversationMember[];
@@ -62,12 +63,25 @@ const resolvedAvatar = computed(() => {
   return hit?.avatar || '';
 });
 
-// 微信/飞书节奏：单聊日常模式隐藏重复昵称，群聊/AI/演练模式才显示头部信息
+const resolvedSenderNickname = computed(() => {
+  if (props.isGroup && !isAi.value) {
+    const hit = props.members.find((m) => String(m.userId) === String(props.message.senderId));
+    if (hit?.groupNickname && hit.groupNickname.trim()) {
+      return hit.groupNickname.trim();
+    }
+  }
+  return props.message.senderNickname;
+});
+
+// 微信/飞书节奏：单聊日常模式隐藏重复昵称，群聊受“显示群成员昵称”开关控制
 const showMetaHeader = computed(() => {
   if (props.grouped) return false;
   if (props.demoMode) return true;
   if (isAi.value) return true;
-  return props.isGroup && !props.isMine;
+  if (props.isGroup && !props.isMine) {
+    return props.showMemberNickname !== false;
+  }
+  return false;
 });
 
 const renderedMarkdown = computed(() =>
@@ -175,7 +189,7 @@ function handleContextMenu(ev: MouseEvent) {
       <template v-if="!grouped">
         <UserAvatar
           v-if="isMine"
-          :name="message.senderNickname"
+          :name="resolvedSenderNickname"
           :src="resolvedAvatar"
           :is-ai="isAi"
           size="sm"
@@ -184,11 +198,11 @@ function handleContextMenu(ev: MouseEvent) {
           v-else
           type="button"
           class="avatar-click-btn"
-          :title="`点击查看 ${message.senderNickname} 的资料名片`"
+          :title="`点击查看 ${resolvedSenderNickname} 的资料名片`"
           @click.stop="emit('open-profile', message.senderId)"
         >
           <UserAvatar
-            :name="message.senderNickname"
+            :name="resolvedSenderNickname"
             :src="resolvedAvatar"
             :is-ai="isAi"
             size="sm"
@@ -200,7 +214,7 @@ function handleContextMenu(ev: MouseEvent) {
 
     <div class="msg-col">
       <div v-if="showMetaHeader" class="msg-meta">
-        <span class="sender-name">{{ message.senderNickname }}</span>
+        <span class="sender-name">{{ resolvedSenderNickname }}</span>
         <span v-if="isAi" class="ai-badge">AI</span>
         <span v-if="demoMode && message.seq > 0" class="meta-seq tabular">#{{ message.seq }}</span>
         <span v-if="message.localStatus === 'sending'" class="meta-sending">发送中...</span>

@@ -6,10 +6,14 @@ import com.imagent.server.dto.ConversationMemberVO;
 import com.imagent.server.dto.ConversationVO;
 import com.imagent.server.dto.CreateDirectConvRequest;
 import com.imagent.server.dto.CreateGroupConvRequest;
+import com.imagent.server.dto.GroupJoinRequestVO;
 import com.imagent.server.dto.InviteMembersRequest;
+import com.imagent.server.dto.InviteMembersResultVO;
 import com.imagent.server.dto.PinnedMessageVO;
 import com.imagent.server.dto.RenameGroupRequest;
 import com.imagent.server.dto.UpdateConvPrefsRequest;
+import com.imagent.server.dto.UpdateGroupAnnouncementRequest;
+import com.imagent.server.dto.UpdateGroupSettingsRequest;
 import com.imagent.server.service.ConversationService;
 import com.imagent.server.service.MessageCollabService;
 import com.imagent.server.service.MessageService;
@@ -53,7 +57,7 @@ public class ConversationController {
     }
 
     /**
-     * 会话成员列表（含在线绿点状态与实时已读水位，支撑飞书已读进度圈、@联想选人、群管理）
+     * 会话成员列表（含群内昵称、在线绿点状态与实时已读水位，支撑飞书已读进度圈、@联想选人、群管理）
      */
     @GetMapping("/{convId}/members")
     public Result<List<ConversationMemberVO>> listMembers(@PathVariable Long convId) {
@@ -61,29 +65,90 @@ public class ConversationController {
     }
 
     /**
-     * 更新个人会话偏好：置顶 / 免打扰
+     * 更新个人会话偏好：置顶 / 免打扰 / 群聊备注 / 我在本群的昵称 / 显示群成员昵称
      */
     @PostMapping("/{convId}/preferences")
     public Result<Void> updatePreferences(@PathVariable Long convId,
-                                          @RequestBody UpdateConvPrefsRequest request) {
-        conversationService.updatePreferences(UserContext.getUserId(), convId, request.getPinned(), request.getMuted());
+                                          @Valid @RequestBody UpdateConvPrefsRequest request) {
+        conversationService.updatePreferences(UserContext.getUserId(), convId, request);
         return Result.ok();
     }
 
     /**
-     * 群聊邀请新成员 + 发布系统灰条通知
+     * 发布或清空群公告 + 发布系统通知提醒全群成员
+     */
+    @PutMapping("/{convId}/announcement")
+    public Result<Void> updateAnnouncement(@PathVariable Long convId,
+                                           @Valid @RequestBody UpdateGroupAnnouncementRequest request) {
+        Long userId = UserContext.getUserId();
+        String notice = conversationService.updateGroupAnnouncement(userId, convId, request.getAnnouncement());
+        if (notice != null && !notice.isBlank()) {
+            messageService.publishSystemMessage(convId, userId, notice);
+        }
+        return Result.ok();
+    }
+
+    /**
+     * 更新群安全设置（如：进群需要群主/群管理员确认）
+     */
+    @PutMapping("/{convId}/settings")
+    public Result<Void> updateGroupSettings(@PathVariable Long convId,
+                                            @RequestBody UpdateGroupSettingsRequest request) {
+        Long userId = UserContext.getUserId();
+        String notice = conversationService.updateGroupSettings(userId, convId, request.getJoinApprovalRequired());
+        if (notice != null && !notice.isBlank()) {
+            messageService.publishSystemMessage(convId, userId, notice);
+        }
+        return Result.ok();
+    }
+
+    /**
+     * 群聊邀请新成员（开启进群确认且为普通成员时自动转入群申请）
      */
     @PostMapping("/{convId}/members")
-    public Result<Void> inviteMembers(@PathVariable Long convId,
-                                      @Valid @RequestBody InviteMembersRequest request) {
+    public Result<InviteMembersResultVO> inviteMembers(@PathVariable Long convId,
+                                                       @Valid @RequestBody InviteMembersRequest request) {
         Long userId = UserContext.getUserId();
-        String notice = conversationService.inviteGroupMembers(userId, convId, request.getMemberIds());
-        messageService.publishSystemMessage(convId, userId, notice);
+        ConversationService.InviteGroupOutcome outcome =
+                conversationService.inviteGroupMembers(userId, convId, request.getMemberIds());
+        if (outcome.systemNotice() != null && !outcome.systemNotice().isBlank()) {
+            messageService.publishSystemMessage(convId, userId, outcome.systemNotice());
+        }
+        return Result.ok(outcome.result());
+    }
+
+    /**
+     * 获取当前群待审核的入群申请列表（群主/群管理员）
+     */
+    @GetMapping("/{convId}/join-requests")
+    public Result<List<GroupJoinRequestVO>> listJoinRequests(@PathVariable Long convId) {
+        return Result.ok(conversationService.listPendingJoinRequests(UserContext.getUserId(), convId));
+    }
+
+    /**
+     * 群主/管理员同意入群申请
+     */
+    @PostMapping("/{convId}/join-requests/{requestId}/approve")
+    public Result<Void> approveJoinRequest(@PathVariable Long convId, @PathVariable Long requestId) {
+        Long userId = UserContext.getUserId();
+        String notice = conversationService.reviewJoinRequest(userId, convId, requestId, true);
+        if (notice != null && !notice.isBlank()) {
+            messageService.publishSystemMessage(convId, userId, notice);
+        }
         return Result.ok();
     }
 
     /**
-     * 群主踢出成员 + 发布系统灰条通知
+     * 群主/管理员拒绝入群申请
+     */
+    @PostMapping("/{convId}/join-requests/{requestId}/reject")
+    public Result<Void> rejectJoinRequest(@PathVariable Long convId, @PathVariable Long requestId) {
+        conversationService.reviewJoinRequest(UserContext.getUserId(), convId, requestId, false);
+        return Result.ok();
+    }
+
+    /**
+     * 群主/管理员踢出成员 + 发布系统灰条通知
      */
     @DeleteMapping("/{convId}/members/{targetUserId}")
     public Result<Void> kickMember(@PathVariable Long convId, @PathVariable Long targetUserId) {

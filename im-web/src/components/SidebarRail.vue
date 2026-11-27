@@ -50,7 +50,11 @@ function openCtxMenu(ev: MouseEvent, conv: Conversation) {
 const matchedLocalConvs = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase();
   if (!kw) return [];
-  return store.conversations.filter((c) => c.title.toLowerCase().includes(kw));
+  return store.conversations.filter(
+    (c) =>
+      c.title.toLowerCase().includes(kw) ||
+      (c.groupRemark || '').toLowerCase().includes(kw)
+  );
 });
 
 function handleSearchInput() {
@@ -137,13 +141,13 @@ function getDraftText(convId: string): string {
               @click="handlePickConversation(c.id)"
             >
               <UserAvatar
-                :name="c.title"
+                :name="c.groupRemark || c.title"
                 :src="c.type === 1 ? c.peerAvatar : null"
                 :is-group="c.type === 2"
                 size="sm"
               />
               <span class="search-item-meta">
-                <strong>{{ c.title }}</strong>
+                <strong>{{ c.groupRemark || c.title }}</strong>
                 <small>{{ c.lastMsgPreview || (c.type === 2 ? '群聊' : '私聊') }}</small>
               </span>
             </button>
@@ -246,7 +250,7 @@ function getDraftText(convId: string): string {
           @contextmenu.prevent="openCtxMenu($event, conv)"
         >
           <UserAvatar
-            :name="conv.title"
+            :name="conv.groupRemark || conv.title"
             :src="conv.type === 1 ? conv.peerAvatar : null"
             :is-group="conv.type === 2"
             :online="conv.type === 1 && Boolean(conv.peerOnline)"
@@ -257,7 +261,7 @@ function getDraftText(convId: string): string {
             <div class="conv-top">
               <span class="conv-title-wrap">
                 <Pin v-if="conv.pinned" :size="11" class="pin-mark" />
-                <span class="conv-title">{{ conv.title }}</span>
+                <span class="conv-title">{{ conv.groupRemark || conv.title }}</span>
               </span>
               <span class="conv-time tabular">{{ formatTimeShort(conv.lastMsgTime) }}</span>
             </div>

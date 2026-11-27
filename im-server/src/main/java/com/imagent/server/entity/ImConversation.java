@@ -15,6 +15,10 @@ public class ImConversation {
     private Integer type;
     private String bizKey;
     private String title;
+    private String announcement;
+    private LocalDateTime announcementUpdatedAt;
+    private Long announcementUpdatedBy;
+    private Integer joinApprovalRequired;
     private Long ownerId;
     private Long currentSeq;
     private Long lastMsgId;
