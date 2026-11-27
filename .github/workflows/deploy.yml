@@ -10,6 +10,7 @@ on:
   push:
     tags:
       - 'v2.*'
+      - 'v3.*'
 
 permissions:
   contents: read
