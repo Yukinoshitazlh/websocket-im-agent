@@ -53,6 +53,7 @@ public class ConversationService {
     private final ImUserMapper userMapper;
     private final UserService userService;
     private final FriendService friendService;
+    private final PresenceService presenceService;
     private final UnreadService unreadService;
     private final MessagePushHelper pushHelper;
     private final StringRedisTemplate redisTemplate;
@@ -78,6 +79,10 @@ public class ConversationService {
         ImConversation existing = conversationMapper.selectOne(new LambdaQueryWrapper<ImConversation>()
                 .eq(ImConversation::getBizKey, bizKey));
         if (existing != null) {
+            memberMapper.update(null, new LambdaUpdateWrapper<ImConversationMember>()
+                    .eq(ImConversationMember::getConversationId, existing.getId())
+                    .eq(ImConversationMember::getUserId, currentUserId)
+                    .set(ImConversationMember::getHidden, 0));
             return toVO(existing, targetUser.getNickname());
         }
 
@@ -128,7 +133,9 @@ public class ConversationService {
 
     public List<ConversationVO> listMyConversations(Long userId) {
         List<ImConversationMember> memberships = memberMapper.selectList(
-                new LambdaQueryWrapper<ImConversationMember>().eq(ImConversationMember::getUserId, userId));
+                new LambdaQueryWrapper<ImConversationMember>()
+                        .eq(ImConversationMember::getUserId, userId)
+                        .ne(ImConversationMember::getHidden, 1));
         if (memberships.isEmpty()) {
             return Collections.emptyList();
         }
@@ -144,21 +151,30 @@ public class ConversationService {
                 .toList();
 
         Map<Long, ImUser> directPeerMap = resolveDirectPeers(directConvIds, userId);
-        Map<Long, Boolean> peerOnlineMap = resolveOnlineFlags(
-                directPeerMap.values().stream().map(ImUser::getId).distinct().toList());
+        List<Long> peerIds = directPeerMap.values().stream().map(ImUser::getId).distinct().toList();
+        Map<Long, Boolean> peerOnlineMap = presenceService != null
+                ? presenceService.resolveVisibleOnlineMap(userId, peerIds)
+                : resolveOnlineFlags(peerIds);
 
         Map<Long, ImConversationMember> memberMap = memberships.stream()
                 .collect(Collectors.toMap(ImConversationMember::getConversationId, m -> m, (a, b) -> a));
 
-        // 一次批量查成员计数
+        // 一次批量查成员列表（同时计算人数与隐身会话判定）
         Map<Long, Integer> countMap = new HashMap<>();
+        Map<Long, List<Long>> convMembersMap = new HashMap<>();
         List<ImConversationMember> allConvMembers = memberMapper.selectList(
                 new LambdaQueryWrapper<ImConversationMember>()
                         .in(ImConversationMember::getConversationId, convIds)
-                        .select(ImConversationMember::getConversationId));
+                        .select(ImConversationMember::getConversationId, ImConversationMember::getUserId));
         for (ImConversationMember m : allConvMembers) {
             countMap.merge(m.getConversationId(), 1, Integer::sum);
+            if (m.getUserId() != null) {
+                convMembersMap.computeIfAbsent(m.getConversationId(), k -> new ArrayList<>()).add(m.getUserId());
+            }
         }
+        PresenceService.UserPresencePolicy myPresencePolicy = presenceService != null
+                ? presenceService.loadPolicy(userId)
+                : null;
 
         // 批量解析群公告发布人昵称
         Set<Long> publisherIds = conversations.stream()
@@ -222,13 +238,21 @@ public class ConversationService {
                     : "";
 
             long currentSeq = conv.getCurrentSeq() == null ? 0L : conv.getCurrentSeq();
-            long unread = redisUnreadMap.getOrDefault(conv.getId(), Math.max(0L, currentSeq - lastRead));
+            long clearedBeforeSeq = (self != null && self.getClearedBeforeSeq() != null)
+                    ? self.getClearedBeforeSeq() : 0L;
+            boolean manualUnread = self != null && Integer.valueOf(1).equals(self.getManualUnread());
+            long baseUnread = redisUnreadMap.getOrDefault(conv.getId(), Math.max(0L, currentSeq - lastRead));
+            long unread = manualUnread ? Math.max(1L, baseUnread) : baseUnread;
             Long mentionSeq = mentionMap.get(conv.getId());
             int memberCount = countMap.getOrDefault(conv.getId(), isDirect ? 2 : 1);
+            boolean clearedAll = clearedBeforeSeq > 0 && currentSeq <= clearedBeforeSeq;
+            boolean stealthActive = myPresencePolicy != null
+                    && myPresencePolicy.isStealthInMembers(userId, convMembersMap.getOrDefault(conv.getId(), List.of()));
 
             result.add(toVO(conv, displayTitle, groupRemark, publisherNick, myGroupNickname,
-                    showMemberNickname, pendingJoinCount, lastRead, unread, mentionSeq, pinned, muted,
-                    memberCount, peerUserId, peerAvatar, peerOnline, peerStatusEmoji, peerStatusText));
+                    showMemberNickname, stealthActive, pendingJoinCount, lastRead, unread, mentionSeq, pinned, muted,
+                    memberCount, peerUserId, peerAvatar, peerOnline, peerStatusEmoji, peerStatusText,
+                    clearedAll));
         }
 
         // 微信/飞书排序：置顶会话优先，其次按最近消息时间倒序
@@ -314,6 +338,56 @@ public class ConversationService {
     }
 
     /**
+     * 手动标为未读（保留真实已读水位不破坏对方进度圈，仅对本人展示未读红点）
+     */
+    public void markAsUnread(Long userId, Long convId) {
+        if (!isMember(convId, userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
+        }
+        memberMapper.markManualUnread(convId, userId);
+        unreadService.markManualUnreadCache(userId, convId);
+    }
+
+    /**
+     * 手动标为已读（推进已读水位至最新 seq 并清除手动未读标记）
+     */
+    public void markAsReadAll(Long userId, Long convId) {
+        if (!isMember(convId, userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
+        }
+        ImConversation conv = conversationMapper.selectById(convId);
+        long currentSeq = (conv != null && conv.getCurrentSeq() != null) ? conv.getCurrentSeq() : 0L;
+        unreadService.markAsRead(userId, convId, currentSeq);
+    }
+
+    /**
+     * 微信式“删除该聊天”：
+     * 仅对当前用户隐藏该会话并清空历史消息水位（不退出群聊、不删除好友、不影响对方记录），
+     * 后续收到新消息或重新发起单聊时自动恢复显示。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteChatForMe(Long userId, Long convId) {
+        if (!isMember(convId, userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
+        }
+        ImConversation conv = conversationMapper.selectById(convId);
+        long currentSeq = (conv != null && conv.getCurrentSeq() != null) ? conv.getCurrentSeq() : 0L;
+        memberMapper.hideAndClearForMember(convId, userId, currentSeq);
+        unreadService.clearUserConvUnread(userId, convId);
+    }
+
+    /**
+     * 查询当前用户在指定会话的个人清空历史水位
+     */
+    public long getClearedBeforeSeq(Long conversationId, Long userId) {
+        ImConversationMember member = memberMapper.selectOne(new LambdaQueryWrapper<ImConversationMember>()
+                .eq(ImConversationMember::getConversationId, conversationId)
+                .eq(ImConversationMember::getUserId, userId)
+                .select(ImConversationMember::getClearedBeforeSeq));
+        return (member != null && member.getClearedBeforeSeq() != null) ? member.getClearedBeforeSeq() : 0L;
+    }
+
+    /**
      * 发布或清空群公告（仅群主/群管理员可操作，发布后推送全员通知）
      */
     @Transactional(rollbackFor = Exception.class)
@@ -395,7 +469,9 @@ public class ConversationService {
         List<Long> userIds = rows.stream().map(ImConversationMember::getUserId).toList();
         Map<Long, ImUser> userMap = userMapper.selectBatchIds(userIds).stream()
                 .collect(Collectors.toMap(ImUser::getId, u -> u, (a, b) -> a));
-        Map<Long, Boolean> onlineMap = resolveOnlineFlags(userIds);
+        Map<Long, Boolean> onlineMap = presenceService != null
+                ? presenceService.resolveVisibleOnlineMap(userId, userIds)
+                : resolveOnlineFlags(userIds);
         Map<Long, Long> redisReadMap = unreadService.getConversationReadWatermarks(convId);
 
         List<ConversationMemberVO> result = new ArrayList<>(rows.size());
@@ -831,21 +907,24 @@ public class ConversationService {
         member.setGroupRemark("");
         member.setGroupNickname("");
         member.setShowMemberNickname(1);
+        member.setManualUnread(0);
+        member.setHidden(0);
+        member.setClearedBeforeSeq(0L);
         memberMapper.insert(member);
     }
 
     private ConversationVO toVO(ImConversation conv, String displayTitle) {
-        return toVO(conv, displayTitle, "", "", "", true, 0,
-                0L, 0L, null, false, false, 2, null, null, null, null, null);
+        return toVO(conv, displayTitle, "", "", "", true, false, 0,
+                0L, 0L, null, false, false, 2, null, null, null, null, null, false);
     }
 
     private ConversationVO toVO(ImConversation conv, String displayTitle, String groupRemark,
                                 String announcementPublisher, String myGroupNickname,
-                                boolean showMemberNickname, int pendingJoinRequestCount,
+                                boolean showMemberNickname, boolean stealthActive, int pendingJoinRequestCount,
                                 long lastReadSeq, long unreadCount, Long mentionSeq, boolean pinned, boolean muted,
                                 int memberCount, Long peerUserId, String peerAvatar, Boolean peerOnline,
-                                String peerStatusEmoji, String peerStatusText) {
-        Long lastTime = conv.getLastMsgTime() != null
+                                String peerStatusEmoji, String peerStatusText, boolean clearedAll) {
+        Long lastTime = (!clearedAll && conv.getLastMsgTime() != null)
                 ? conv.getLastMsgTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 : null;
         Long announcementTime = conv.getAnnouncementUpdatedAt() != null
@@ -862,6 +941,7 @@ public class ConversationService {
                 .joinApprovalRequired(Integer.valueOf(1).equals(conv.getJoinApprovalRequired()))
                 .myGroupNickname(myGroupNickname)
                 .showMemberNickname(showMemberNickname)
+                .stealthActive(stealthActive)
                 .pendingJoinRequestCount(pendingJoinRequestCount)
                 .ownerId(conv.getOwnerId())
                 .currentSeq(conv.getCurrentSeq())
@@ -876,7 +956,7 @@ public class ConversationService {
                 .peerOnline(peerOnline)
                 .peerStatusEmoji(peerStatusEmoji)
                 .peerStatusText(peerStatusText)
-                .lastMsgPreview(conv.getLastMsgPreview())
+                .lastMsgPreview(clearedAll ? "" : conv.getLastMsgPreview())
                 .lastMsgTime(lastTime)
                 .build();
     }

@@ -3,10 +3,13 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import {
   Bell,
   BellOff,
+  EyeOff,
   FlaskConical,
   LogOut,
   MessageSquare,
   Moon,
+  MoonStar,
+  Radio,
   Settings,
   Sun,
   User,
@@ -63,7 +66,23 @@ onUnmounted(() => {
         clickable
       />
       <span
-        v-if="store.currentUser?.statusEmoji"
+        v-if="store.presenceSettings.mode === 'NONE'"
+        class="nav-stealth-badge stealth-none"
+        title="当前全员隐身中 · 点击调整在线状态"
+        @click.stop="store.showPresenceModal = true"
+      >
+        <MoonStar :size="10" />
+      </span>
+      <span
+        v-else-if="store.presenceSettings.mode === 'EXCEPT' || store.presenceSettings.mode === 'ONLY'"
+        class="nav-stealth-badge stealth-partial"
+        :title="`${store.presenceSummaryText} · 点击调整在线状态`"
+        @click.stop="store.showPresenceModal = true"
+      >
+        <EyeOff :size="10" />
+      </span>
+      <span
+        v-else-if="store.currentUser?.statusEmoji"
         class="nav-status-emoji"
         :title="store.currentUser.statusText || '当前状态'"
       >
@@ -123,6 +142,20 @@ onUnmounted(() => {
           >
             <User :size="15" />
             <span>个人资料与状态</span>
+          </button>
+
+          <button
+            type="button"
+            class="set-item"
+            @click="store.showPresenceModal = true; closeSettings()"
+          >
+            <MoonStar v-if="store.presenceSettings.mode === 'NONE'" :size="15" />
+            <EyeOff v-else-if="store.presenceSettings.mode !== 'ALL'" :size="15" />
+            <Radio v-else :size="15" />
+            <span>在线状态与隐身</span>
+            <span class="mini-tag" :class="{ stealth: store.presenceSettings.mode !== 'ALL' }">
+              {{ store.presenceSummaryText }}
+            </span>
           </button>
 
           <button
@@ -253,6 +286,35 @@ onUnmounted(() => {
 
 .ws-dot.connecting {
   background: #F59E0B;
+}
+
+.nav-stealth-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--surface-strong);
+  cursor: pointer;
+}
+
+.nav-stealth-badge.stealth-none {
+  background: linear-gradient(135deg, #7c3aed, #6366f1);
+}
+
+.nav-stealth-badge.stealth-partial {
+  background: linear-gradient(135deg, #d97706, #f59e0b);
+}
+
+.mini-tag.stealth {
+  color: #7c3aed;
+  border-color: rgba(124, 58, 237, 0.3);
+  background: rgba(124, 58, 237, 0.1);
 }
 
 .nav-group {

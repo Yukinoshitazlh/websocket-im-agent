@@ -16,6 +16,8 @@ import type {
   GroupJoinRequestItem,
   InviteMembersResult,
   PinnedMessage,
+  PresenceMode,
+  PresenceSettings,
   ReactionGroup,
   SendEmailCodeResp,
   UserLlmConfig,
@@ -24,7 +26,7 @@ import type {
   WsTicketResp
 } from '../types/im';
 import { apiRequest, setUnauthorizedHandler, uploadFileWithInstantCheck } from '../utils/api';
-import { cacheConversationMessages, loadCachedMessages } from '../utils/db';
+import { cacheConversationMessages, clearCachedMessages, loadCachedMessages } from '../utils/db';
 import {
   isDesktopNotificationSupported,
   requestDesktopNotificationPermission,
@@ -88,6 +90,12 @@ export const useChatStore = defineStore('chat', () => {
   const blockedUsers = ref<UserProfile[]>([]);
   const friendRequests = ref<FriendRequestItem[]>([]);
   const userLlmConfig = ref<UserLlmConfig | null>(null);
+  const presenceSettings = ref<PresenceSettings>({
+    mode: 'ALL',
+    exceptUserIds: [],
+    onlyUserIds: []
+  });
+  const showPresenceModal = ref<boolean>(false);
   const viewingProfile = ref<UserProfile | null>(null);
 
   const wsState = ref<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -642,6 +650,7 @@ export const useChatStore = defineStore('chat', () => {
     sessionStorage.setItem('im_token', data.token);
     sessionStorage.setItem('im_user', JSON.stringify(data.user));
     loadDraftsFromStorage();
+    loadMyPresence();
     loadConversations();
     loadContactsData();
     connectWs();
@@ -1035,12 +1044,127 @@ export const useChatStore = defineStore('chat', () => {
     pushToast('已拒绝入群申请');
   }
 
-  async function markConvAsReadManual(convId: string) {
+  const presenceSummaryText = computed(() => {
+    const p = presenceSettings.value;
+    if (p.mode === 'NONE') return '全员隐身';
+    if (p.mode === 'EXCEPT') {
+      return p.exceptUserIds.length > 0 ? `不给 ${p.exceptUserIds.length} 人看` : '不给谁看';
+    }
+    if (p.mode === 'ONLY') {
+      return p.onlyUserIds.length > 0 ? `仅 ${p.onlyUserIds.length} 人可见` : '部分可见';
+    }
+    return '在线可见';
+  });
+
+  function isStealthForConv(convId: string): boolean {
+    if (presenceSettings.value.mode === 'NONE') return true;
     const conv = conversations.value.find((c) => c.id === convId);
-    if (!conv || conv.currentSeq <= 0) return;
-    sendMsgAck(convId, conv.currentSeq);
-    window.setTimeout(loadConversations, 150);
-    pushToast('已标为已读');
+    if (conv && typeof conv.stealthActive === 'boolean') {
+      return conv.stealthActive;
+    }
+    if (conv && conv.type === 1 && conv.peerUserId) {
+      if (presenceSettings.value.mode === 'EXCEPT') {
+        return presenceSettings.value.exceptUserIds.includes(String(conv.peerUserId));
+      }
+      if (presenceSettings.value.mode === 'ONLY') {
+        return !presenceSettings.value.onlyUserIds.includes(String(conv.peerUserId));
+      }
+    }
+    return false;
+  }
+
+  async function loadMyPresence(): Promise<PresenceSettings | null> {
+    if (!token.value) return null;
+    try {
+      const cfg = await apiRequest<PresenceSettings>('/api/users/me/presence', token.value);
+      presenceSettings.value = {
+        mode: cfg.mode || 'ALL',
+        exceptUserIds: (cfg.exceptUserIds || []).map(String),
+        onlyUserIds: (cfg.onlyUserIds || []).map(String)
+      };
+      return presenceSettings.value;
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveMyPresence(payload: {
+    mode: PresenceMode;
+    exceptUserIds?: string[];
+    onlyUserIds?: string[];
+  }): Promise<PresenceSettings> {
+    const saved = await apiRequest<PresenceSettings>('/api/users/me/presence', token.value, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    presenceSettings.value = {
+      mode: saved.mode || 'ALL',
+      exceptUserIds: (saved.exceptUserIds || []).map(String),
+      onlyUserIds: (saved.onlyUserIds || []).map(String)
+    };
+    await loadConversations();
+    const label =
+      saved.mode === 'NONE'
+        ? '已切换为「全员隐身」，查看消息不会触发已读'
+        : saved.mode === 'EXCEPT'
+          ? `已保存「不给谁看」（已屏蔽 ${saved.exceptUserIds.length} 人）`
+          : saved.mode === 'ONLY'
+            ? `已保存「部分可见」（仅 ${saved.onlyUserIds.length} 人可见在线）`
+            : '已开启在线状态（所有人可见）';
+    pushToast(label, 'success');
+    return presenceSettings.value;
+  }
+
+  async function markConvAsReadManual(convId: string) {
+    try {
+      const wasStealth = isStealthForConv(convId);
+      await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/read`, token.value, {
+        method: 'POST'
+      });
+      await loadConversations();
+      pushToast(wasStealth ? '已手动标为已读（对方已收到已读状态）' : '已标为已读', 'success');
+    } catch (e: any) {
+      pushToast(e.message || '标为已读失败', 'error');
+    }
+  }
+
+  async function markConvAsUnreadManual(convId: string) {
+    try {
+      await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/unread`, token.value, {
+        method: 'POST'
+      });
+      await loadConversations();
+      pushToast('已标为未读');
+    } catch (e: any) {
+      pushToast(e.message || '标为未读失败', 'error');
+    }
+  }
+
+  async function deleteConversationForMe(convId: string) {
+    try {
+      await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}`, token.value, {
+        method: 'DELETE'
+      });
+      if (currentUser.value) {
+        await clearCachedMessages(currentUser.value.id, convId);
+      }
+      setDraft(convId, '');
+      if (activeConvId.value === convId) {
+        activeConvId.value = null;
+        messages.value = [];
+        activeMembers.value = [];
+        activePins.value = [];
+        activeJoinRequests.value = [];
+        replyTarget.value = null;
+        unreadDigestBanner.value = null;
+        mentionJumpSeq.value = null;
+      }
+      conversations.value = conversations.value.filter((c) => c.id !== convId);
+      await loadConversations();
+      pushToast('已删除该聊天');
+    } catch (e: any) {
+      pushToast(e.message || '删除聊天失败', 'error');
+    }
   }
 
   async function inviteGroupMembers(convId: string, memberIds: string[]) {
@@ -1154,8 +1278,14 @@ export const useChatStore = defineStore('chat', () => {
       if (currentUser.value) {
         cacheConversationMessages(currentUser.value.id, convId, remote);
       }
-      if (maxLoadedSeq.value > 0) {
-        sendMsgAck(convId, maxLoadedSeq.value);
+      if (!isStealthForConv(convId)) {
+        if (maxLoadedSeq.value > 0) {
+          sendMsgAck(convId, maxLoadedSeq.value);
+        } else if (targetConv && targetConv.unreadCount > 0) {
+          await apiRequest<void>(`/api/conversations/${encodeURIComponent(convId)}/read`, token.value, {
+            method: 'POST'
+          }).catch(() => {});
+        }
       }
       window.setTimeout(loadConversations, 150);
       loadAgentMetrics();
@@ -1227,6 +1357,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function sendMsgAck(convId: string, seq: number) {
     if (!convId || seq <= 0) return;
+    if (isStealthForConv(convId)) return;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
@@ -1892,6 +2023,7 @@ export const useChatStore = defineStore('chat', () => {
   if (token.value && currentUser.value) {
     loadDraftsFromStorage();
     refreshMyProfile();
+    loadMyPresence();
     loadConversations();
     loadContactsData();
     connectWs();
@@ -1912,6 +2044,9 @@ export const useChatStore = defineStore('chat', () => {
     friendRequests,
     pendingFriendRequestCount,
     userLlmConfig,
+    presenceSettings,
+    presenceSummaryText,
+    showPresenceModal,
     viewingProfile,
     wsState,
     wsStatusText,
@@ -1968,6 +2103,9 @@ export const useChatStore = defineStore('chat', () => {
     unblockUser,
     loadMyLlmConfig,
     saveMyLlmConfig,
+    loadMyPresence,
+    saveMyPresence,
+    isStealthForConv,
     openProfile,
     uploadAvatarFile,
     updateMyProfile,
@@ -1996,6 +2134,8 @@ export const useChatStore = defineStore('chat', () => {
     approveJoinRequest,
     rejectJoinRequest,
     markConvAsReadManual,
+    markConvAsUnreadManual,
+    deleteConversationForMe,
     inviteGroupMembers,
     kickGroupMember,
     leaveGroup,

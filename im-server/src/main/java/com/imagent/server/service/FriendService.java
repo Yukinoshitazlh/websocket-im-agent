@@ -50,6 +50,7 @@ public class FriendService {
     private final ImUserMapper userMapper;
     private final StringRedisTemplate redisTemplate;
     private final MessagePushHelper messagePushHelper;
+    private final PresenceService presenceService;
 
     /**
      * 我的好友列表（含在线绿点与状态，支持关键词过滤）
@@ -66,7 +67,9 @@ public class FriendService {
         List<Long> friendIds = edges.stream().map(ImFriendship::getFriendId).toList();
         Map<Long, ImUser> userMap = userMapper.selectBatchIds(friendIds).stream()
                 .collect(Collectors.toMap(ImUser::getId, u -> u, (a, b) -> a));
-        Map<Long, Boolean> onlineMap = resolveOnlineFlags(friendIds);
+        Map<Long, Boolean> onlineMap = presenceService != null
+                ? presenceService.resolveVisibleOnlineMap(userId, friendIds)
+                : resolveOnlineFlags(friendIds);
 
         String kw = keyword == null ? "" : keyword.trim().toLowerCase();
         List<UserProfileVO> result = new ArrayList<>();

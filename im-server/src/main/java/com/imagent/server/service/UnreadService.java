@@ -30,9 +30,10 @@ public class UnreadService {
     private final ImConversationMapper conversationMapper;
 
     /**
-     * 新消息落库后，为除发送者外的会话成员递增未读计数
+     * 新消息落库后，自动恢复被隐藏的会话并为除发送者外的会话成员递增未读计数
      */
     public void incrementUnreadForMembers(Long conversationId, Long senderId, List<Long> memberIds) {
+        memberMapper.unhideAllMembers(conversationId);
         String convField = String.valueOf(conversationId);
         for (Long memberId : memberIds) {
             if (memberId.equals(senderId)) {
@@ -166,6 +167,35 @@ public class UnreadService {
     public void clearSenderUnreadFast(Long senderId, Long conversationId) {
         redisTemplate.opsForHash().delete(RedisKeys.userUnreadHash(senderId), String.valueOf(conversationId));
         redisTemplate.opsForHash().delete(RedisKeys.userMentionHash(senderId), String.valueOf(conversationId));
+    }
+
+    /**
+     * 手动标为未读时，保证 Redis 未读计数至少为 1
+     */
+    public void markManualUnreadCache(Long userId, Long conversationId) {
+        String key = RedisKeys.userUnreadHash(userId);
+        String convField = String.valueOf(conversationId);
+        Object existing = redisTemplate.opsForHash().get(key, convField);
+        long current = 0L;
+        if (existing != null) {
+            try {
+                current = Long.parseLong(String.valueOf(existing));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        if (current < 1L) {
+            redisTemplate.opsForHash().put(key, convField, "1");
+            redisTemplate.expire(key, UNREAD_TTL);
+        }
+    }
+
+    /**
+     * 清理个人在指定会话的未读红点与 @ 提醒缓存（保留全群已读水位）
+     */
+    public void clearUserConvUnread(Long userId, Long conversationId) {
+        String convField = String.valueOf(conversationId);
+        redisTemplate.opsForHash().delete(RedisKeys.userUnreadHash(userId), convField);
+        redisTemplate.opsForHash().delete(RedisKeys.userMentionHash(userId), convField);
     }
 
     /**

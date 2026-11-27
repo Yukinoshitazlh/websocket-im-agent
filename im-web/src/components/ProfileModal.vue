@@ -532,6 +532,24 @@ function previewSound() {
               placeholder="自定义今日状态，如：冲刺秋招简历中..."
             />
           </div>
+
+          <button
+            type="button"
+            class="presence-entry-row"
+            @click="emit('close'); store.showPresenceModal = true"
+          >
+            <span class="pe-left">
+              <EyeOff v-if="store.presenceSettings.mode !== 'ALL'" :size="14" class="pe-ic stealth" />
+              <Eye v-else :size="14" class="pe-ic" />
+              <span>在线状态与隐身权限</span>
+            </span>
+            <span class="pe-right">
+              <span class="pe-badge" :class="{ stealth: store.presenceSettings.mode !== 'ALL' }">
+                {{ store.presenceSummaryText }}
+              </span>
+              <span class="pe-link">设置</span>
+            </span>
+          </button>
         </section>
 
         <!-- 基本资料编辑 -->

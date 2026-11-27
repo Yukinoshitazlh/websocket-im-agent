@@ -6,8 +6,10 @@ import {
   AtSign,
   Bell,
   BellOff,
+  CheckCheck,
   CheckSquare,
   Copy,
+  EyeOff,
   FileText,
   Forward,
   Loader2,
@@ -40,6 +42,7 @@ import ReadDetailModal from './components/ReadDetailModal.vue';
 import ForwardModal from './components/ForwardModal.vue';
 import BundleViewerModal from './components/BundleViewerModal.vue';
 import ProfileModal from './components/ProfileModal.vue';
+import PresenceModal from './components/PresenceModal.vue';
 import UserAvatar from './components/UserAvatar.vue';
 import type { ChatMessage } from './types/im';
 import { avatarColor, avatarInitial, formatDateDivider, formatFileSize } from './utils/format';
@@ -144,6 +147,7 @@ onUnmounted(() => {
 function onGlobalKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (store.lightboxUrl) store.lightboxUrl = null;
+    else if (store.showPresenceModal) store.showPresenceModal = false;
     else if (store.viewingProfile) store.viewingProfile = null;
     else if (store.viewingBundle) store.viewingBundle = null;
     else if (store.readDetailMsg) store.readDetailMsg = null;
@@ -685,11 +689,10 @@ function handleAiSummarizeSelected() {
           </div>
         </Transition>
 
-        <!-- 顶栏（手机端自动出现左侧返回按钮，切回会话列表） -->
-        <header class="chat-header">
+        <!-- 顶栏（仅选中会话后显示；手机端自动出现左侧返回按钮） -->
+        <header v-if="store.activeConversation" class="chat-header">
           <div class="header-left">
             <button
-              v-if="store.activeConversation"
               type="button"
               class="btn-icon mobile-back-btn"
               title="返回会话列表"
@@ -697,8 +700,7 @@ function handleAiSummarizeSelected() {
             >
               <ArrowLeft :size="18" />
             </button>
-            <template v-if="store.activeConversation">
-              <Transition name="tab-swap" mode="out-in">
+            <Transition name="tab-swap" mode="out-in">
                 <button
                   v-if="store.activeConversation.type === 1 && store.activeConversation.peerUserId"
                   :key="store.activeConversation.id"
@@ -752,11 +754,9 @@ function handleAiSummarizeSelected() {
                   <span>{{ store.typingHint }}</span>
                 </span>
               </Transition>
-            </template>
-            <h2 v-else class="conv-heading muted">脉信 PulseIM</h2>
           </div>
 
-          <div v-if="store.activeConversation" class="header-right">
+          <div class="header-right">
             <Transition name="fade" mode="out-in">
               <span
                 v-if="store.syncNotice && (store.demoMode || store.syncNotice.includes('补齐'))"
@@ -918,17 +918,75 @@ function handleAiSummarizeSelected() {
         </Transition>
 
         <!-- 空状态 -->
+        <!-- 未选中会话：参考微信 / QQ 桌面端的极简单色品牌水印 -->
         <div v-if="!store.activeConversation" class="empty-stage">
-          <div class="empty-card glass">
-            <div class="empty-orb" />
-            <h3>开始一段对话</h3>
-            <p>选择左侧会话开始聊天，右键会话可置顶或免打扰；左下角齿轮设置可切换主题与面试演练模式。</p>
+          <div class="empty-watermark">
+            <svg
+              class="empty-mark-svg"
+              width="86"
+              height="86"
+              viewBox="0 0 512 512"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M156 112H356A72 72 0 0 1 428 184V290A72 72 0 0 1 356 362H224L148 420V362A56 56 0 0 1 84 306V184A72 72 0 0 1 156 112Z"
+                fill="currentColor"
+                fill-opacity="0.06"
+                stroke="currentColor"
+                stroke-width="22"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M138 238H196L222 192L254 294L286 168L310 238H374"
+                stroke="currentColor"
+                stroke-width="22"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span class="empty-brand-label">脉信</span>
           </div>
         </div>
 
         <!-- 消息滚动区 -->
         <template v-else>
           <div class="stage-banners">
+            <Transition name="pop">
+              <div
+                v-if="store.activeConversation && store.isStealthForConv(store.activeConversation.id)"
+                class="stealth-capsule liquid-lens"
+              >
+                <span class="stealth-cap-left">
+                  <EyeOff :size="13" class="stealth-ic" />
+                  <span>隐身查看中 · 对方看不到已读</span>
+                </span>
+                <span class="stealth-cap-actions">
+                  <button
+                    v-if="
+                      store.activeConversation.unreadCount > 0 ||
+                      (store.activeConversation.currentSeq || 0) > (store.activeConversation.lastReadSeq || 0)
+                    "
+                    type="button"
+                    class="btn btn-primary btn-xs stealth-read-btn"
+                    @click="store.markConvAsReadManual(store.activeConversation.id)"
+                  >
+                    <CheckCheck :size="12" />
+                    <span>手动标为已读</span>
+                  </button>
+                  <span v-else class="stealth-synced-tag">已同步已读</span>
+                  <button
+                    type="button"
+                    class="stealth-cfg-btn"
+                    title="调整在线状态与隐身设置"
+                    @click="store.showPresenceModal = true"
+                  >
+                    调整
+                  </button>
+                </span>
+              </div>
+            </Transition>
+
             <Transition name="pop">
               <div
                 v-if="store.unreadDigestBanner && store.unreadDigestBanner.conversationId === store.activeConvId"
@@ -1343,6 +1401,14 @@ function handleAiSummarizeSelected() {
       v-if="store.viewingProfile"
       :profile="store.viewingProfile"
       @close="store.viewingProfile = null"
+    />
+  </Transition>
+
+  <!-- 在线状态与隐身设置弹窗 -->
+  <Transition name="modal">
+    <PresenceModal
+      v-if="store.showPresenceModal"
+      @close="store.showPresenceModal = false"
     />
   </Transition>
 
@@ -1917,41 +1983,29 @@ function handleAiSummarizeSelected() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 24px 24px 8vh;
+  user-select: none;
+  pointer-events: none;
 }
 
-.empty-card {
-  max-width: 420px;
-  text-align: center;
-  border-radius: 24px;
-  padding: 34px 28px 30px;
-  overflow: hidden;
-  animation: rise-in 0.8s var(--ease-out);
+.empty-watermark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: var(--ink-muted);
+  opacity: 0.26;
 }
 
-.empty-orb {
-  width: 60px;
-  height: 60px;
-  margin: 0 auto 16px;
-  border-radius: 50%;
-  background: var(--accent-grad);
-  box-shadow: 0 12px 32px rgba(58, 107, 255, 0.4), inset 0 2px 6px rgba(255, 255, 255, 0.5);
-  animation: orb-float 4s ease-in-out infinite;
+.empty-mark-svg {
+  display: block;
 }
 
-@keyframes orb-float {
-  0%, 100% { transform: translateY(0) scale(1); border-radius: 50%; }
-  50% { transform: translateY(-8px) scale(1.04); border-radius: 46% 54% 52% 48%; }
-}
-
-.empty-card h3 {
-  font-size: 17px;
-  margin-bottom: 8px;
-}
-
-.empty-card p {
-  font-size: 13px;
-  color: var(--ink-secondary);
+.empty-brand-label {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
 }
 
 .msg-scroll {

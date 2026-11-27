@@ -62,3 +62,30 @@ export async function loadCachedMessages(
     return [];
   }
 }
+
+export async function clearCachedMessages(
+  userId: string,
+  conversationId: string
+): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const index = store.index('by_conv');
+      const req = index.getAllKeys(IDBKeyRange.only(conversationId));
+      req.onsuccess = () => {
+        const prefix = `${userId}:${conversationId}:`;
+        for (const key of req.result || []) {
+          if (typeof key === 'string' && key.startsWith(prefix)) {
+            store.delete(key);
+          }
+        }
+        resolve();
+      };
+      req.onerror = () => resolve();
+    });
+  } catch {
+    // 浏览器隐私模式禁用 IndexedDB 时静默降级
+  }
+}

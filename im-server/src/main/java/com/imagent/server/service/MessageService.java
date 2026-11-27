@@ -66,6 +66,7 @@ public class MessageService {
     private final UserService userService;
     private final ConversationService conversationService;
     private final FriendService friendService;
+    private final PresenceService presenceService;
     private final SeqGeneratorService seqGeneratorService;
     private final UnreadService unreadService;
     private final AgentBridgeService agentBridgeService;
@@ -83,6 +84,7 @@ public class MessageService {
                           UserService userService,
                           ConversationService conversationService,
                           FriendService friendService,
+                          PresenceService presenceService,
                           SeqGeneratorService seqGeneratorService,
                           UnreadService unreadService,
                           AgentBridgeService agentBridgeService,
@@ -99,6 +101,7 @@ public class MessageService {
         this.userService = userService;
         this.conversationService = conversationService;
         this.friendService = friendService;
+        this.presenceService = presenceService;
         this.seqGeneratorService = seqGeneratorService;
         this.unreadService = unreadService;
         this.agentBridgeService = agentBridgeService;
@@ -118,9 +121,11 @@ public class MessageService {
         if (!conversationService.isMember(conversationId, userId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
         }
+        long clearedBeforeSeq = conversationService.getClearedBeforeSeq(conversationId, userId);
         int safeLimit = Math.min(Math.max(limit, 1), 100);
         LambdaQueryWrapper<ImMessage> wrapper = new LambdaQueryWrapper<ImMessage>()
                 .eq(ImMessage::getConversationId, conversationId)
+                .gt(clearedBeforeSeq > 0, ImMessage::getSeq, clearedBeforeSeq)
                 .lt(beforeSeq != null && beforeSeq > 0, ImMessage::getSeq, beforeSeq)
                 .orderByDesc(ImMessage::getSeq)
                 .last("LIMIT " + safeLimit);
@@ -133,7 +138,7 @@ public class MessageService {
     }
 
     /**
-     * 会话内历史关键词搜索（强校验会话成员权限，跳过已撤回消息）
+     * 会话内历史关键词搜索（强校验会话成员权限，跳过已撤回消息与个人已清空历史）
      */
     public List<MessageVO> searchMessages(Long userId, Long conversationId, String keyword, int limit) {
         if (!conversationService.isMember(conversationId, userId)) {
@@ -142,10 +147,12 @@ public class MessageService {
         if (keyword == null || keyword.isBlank()) {
             return Collections.emptyList();
         }
+        long clearedBeforeSeq = conversationService.getClearedBeforeSeq(conversationId, userId);
         int safeLimit = Math.min(Math.max(limit, 1), 50);
         List<ImMessage> messages = messageMapper.selectList(
                 new LambdaQueryWrapper<ImMessage>()
                         .eq(ImMessage::getConversationId, conversationId)
+                        .gt(clearedBeforeSeq > 0, ImMessage::getSeq, clearedBeforeSeq)
                         .eq(ImMessage::getStatus, 1)
                         .like(ImMessage::getContent, keyword.trim())
                         .orderByDesc(ImMessage::getSeq)
@@ -163,7 +170,8 @@ public class MessageService {
         if (!conversationService.isMember(conversationId, userId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员");
         }
-        long safeAfterSeq = (afterSeq == null || afterSeq < 0) ? 0L : afterSeq;
+        long clearedBeforeSeq = conversationService.getClearedBeforeSeq(conversationId, userId);
+        long safeAfterSeq = Math.max((afterSeq == null || afterSeq < 0) ? 0L : afterSeq, clearedBeforeSeq);
         int safeLimit = Math.min(Math.max(limit, 1), 200);
         List<ImMessage> messages = messageMapper.selectList(
                 new LambdaQueryWrapper<ImMessage>()
@@ -178,13 +186,36 @@ public class MessageService {
     }
 
     /**
-     * 处理客户端已读回执（MSG_ACK 或 HTTP 已读上报），水位前进时向其他成员实时广播 READ_RECEIPT
+     * 处理客户端自动已读回执（MSG_ACK 或 HTTP 已读上报）：
+     * 若当前用户在对该会话隐身，则静默忽略自动已读上报，不推进已读水位、不广播 READ_RECEIPT；
+     * 仅在用户主动触发“手动标为已读”（ackReadManual）时才上报。
      */
     public void ackRead(Long userId, Long conversationId, Long seq) {
         List<Long> memberIds = conversationService.listMemberIds(conversationId);
         if (!memberIds.contains(userId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "无权操作该会话已读状态");
         }
+        if (presenceService != null && presenceService.isStealthInConversation(userId, memberIds)) {
+            log.debug("用户处于隐身状态，已拦截自动已读回执: userId={}, convId={}, seq={}", userId, conversationId, seq);
+            return;
+        }
+        applyReadAck(userId, conversationId, seq, memberIds);
+    }
+
+    /**
+     * 用户主动点击“手动标为已读”：即使当前处于隐身状态，也立即推进已读水位并向会话其他成员广播 READ_RECEIPT
+     */
+    public void ackReadManual(Long userId, Long conversationId) {
+        List<Long> memberIds = conversationService.listMemberIds(conversationId);
+        if (!memberIds.contains(userId)) {
+            throw new BizException(ErrorCode.FORBIDDEN, "无权操作该会话已读状态");
+        }
+        ImConversation conv = conversationMapper.selectById(conversationId);
+        long currentSeq = (conv != null && conv.getCurrentSeq() != null) ? conv.getCurrentSeq() : 0L;
+        applyReadAck(userId, conversationId, currentSeq, memberIds);
+    }
+
+    private void applyReadAck(Long userId, Long conversationId, Long seq, List<Long> memberIds) {
         boolean advanced = unreadService.markAsRead(userId, conversationId, seq);
         if (advanced && seq != null && seq > 0) {
             List<Long> others = memberIds.stream().filter(id -> !id.equals(userId)).toList();
@@ -247,7 +278,10 @@ public class MessageService {
         if (!memberIds.contains(userId)) {
             return;
         }
-        List<Long> targets = memberIds.stream().filter(id -> !id.equals(userId)).toList();
+        List<Long> rawTargets = memberIds.stream().filter(id -> !id.equals(userId)).toList();
+        List<Long> targets = presenceService != null
+                ? presenceService.filterVisibleReceivers(userId, rawTargets)
+                : rawTargets;
         if (targets.isEmpty()) {
             return;
         }
@@ -316,6 +350,7 @@ public class MessageService {
         if (!memberIds.contains(senderId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "无权向该会话发送消息");
         }
+        // 单聊实时校验好友与拉黑状态（被拉黑或解除好友后立即拒收）
         if (memberIds.size() == 2 && friendService != null) {
             ImConversation conv = conversationMapper.selectById(convId);
             if (conv != null && Integer.valueOf(1).equals(conv.getType())) {

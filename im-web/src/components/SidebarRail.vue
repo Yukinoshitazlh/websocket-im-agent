@@ -4,10 +4,12 @@ import {
   Bell,
   BellOff,
   CheckCheck,
+  MessageSquareDot,
   Pin,
   PinOff,
   Plus,
   Search,
+  Trash2,
   Users,
   Wifi,
   WifiOff,
@@ -42,8 +44,18 @@ onUnmounted(() => window.removeEventListener('click', closePopovers));
 
 function openCtxMenu(ev: MouseEvent, conv: Conversation) {
   const x = Math.min(ev.clientX, window.innerWidth - 190);
-  const y = Math.min(ev.clientY, window.innerHeight - 160);
+  const y = Math.min(ev.clientY, window.innerHeight - 210);
   ctxMenu.value = { conv, x, y };
+}
+
+async function handleDeleteChat(conv: Conversation) {
+  closePopovers();
+  const displayName = conv.groupRemark || conv.title;
+  const ok = window.confirm(
+    `确认删除「${displayName}」？\n删除后将清空该聊天的个人消息记录并从列表移除（不会退出群聊或删除好友）。`
+  );
+  if (!ok) return;
+  await store.deleteConversationForMe(conv.id);
 }
 
 // 本地已有会话实时过滤 + 远端用户搜索二合一（微信左上角搜索体验）
@@ -316,6 +328,26 @@ function getDraftText(convId: string): string {
           </button>
 
           <button
+            v-if="ctxMenu.conv.unreadCount > 0"
+            type="button"
+            class="ctx-item"
+            @click="store.markConvAsReadManual(ctxMenu.conv.id); closePopovers()"
+          >
+            <CheckCheck :size="14" />
+            <span>标为已读</span>
+          </button>
+
+          <button
+            v-else
+            type="button"
+            class="ctx-item"
+            @click="store.markConvAsUnreadManual(ctxMenu.conv.id); closePopovers()"
+          >
+            <MessageSquareDot :size="14" />
+            <span>标为未读</span>
+          </button>
+
+          <button
             type="button"
             class="ctx-item"
             @click="store.updateConvPreferences(ctxMenu.conv.id, { muted: !ctxMenu.conv.muted }); closePopovers()"
@@ -325,14 +357,15 @@ function getDraftText(convId: string): string {
             <span>{{ ctxMenu.conv.muted ? '取消免打扰' : '消息免打扰' }}</span>
           </button>
 
+          <div class="ctx-divider" />
+
           <button
-            v-if="ctxMenu.conv.unreadCount > 0"
             type="button"
-            class="ctx-item"
-            @click="store.markConvAsReadManual(ctxMenu.conv.id); closePopovers()"
+            class="ctx-item danger"
+            @click="handleDeleteChat(ctxMenu.conv)"
           >
-            <CheckCheck :size="14" />
-            <span>标为已读</span>
+            <Trash2 :size="14" />
+            <span>删除该聊天</span>
           </button>
         </div>
       </Transition>

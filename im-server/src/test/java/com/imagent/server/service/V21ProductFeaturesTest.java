@@ -17,6 +17,7 @@ import com.imagent.server.entity.ImFriendship;
 import com.imagent.server.entity.ImGroupJoinRequest;
 import com.imagent.server.entity.ImUser;
 import com.imagent.server.entity.ImUserLlmConfig;
+import com.imagent.server.entity.ImUserPresenceRule;
 import com.imagent.server.mapper.ImConversationMapper;
 import com.imagent.server.mapper.ImConversationMemberMapper;
 import com.imagent.server.mapper.ImFriendRequestMapper;
@@ -24,6 +25,7 @@ import com.imagent.server.mapper.ImFriendshipMapper;
 import com.imagent.server.mapper.ImGroupJoinRequestMapper;
 import com.imagent.server.mapper.ImUserLlmConfigMapper;
 import com.imagent.server.mapper.ImUserMapper;
+import com.imagent.server.mapper.ImUserPresenceRuleMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -59,9 +61,11 @@ class V21ProductFeaturesTest {
     @Mock private ImConversationMapper conversationMapper;
     @Mock private ImConversationMemberMapper conversationMemberMapper;
     @Mock private ImGroupJoinRequestMapper groupJoinRequestMapper;
+    @Mock private ImUserPresenceRuleMapper presenceRuleMapper;
     @Mock private ImUserMapper userMapper;
     @Mock private UserService mockUserService;
     @Mock private FriendService mockFriendService;
+    @Mock private PresenceService mockPresenceService;
     @Mock private UnreadService mockUnreadService;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
@@ -90,12 +94,14 @@ class V21ProductFeaturesTest {
         ServerSecurityProperties secProps = new ServerSecurityProperties();
         UserLlmConfigService service = new UserLlmConfigService(llmConfigMapper, secProps);
 
+        // 拦截云元数据与本机 SSRF 地址
         UpdateUserLlmConfigRequest ssrfReq = new UpdateUserLlmConfigRequest();
         ssrfReq.setEnabled(true);
         ssrfReq.setBaseUrl("http://169.254.169.254/latest/meta-data");
         ssrfReq.setApiKey("sk-test-1234567890");
         assertThrows(BizException.class, () -> service.updateConfig(101L, ssrfReq));
 
+        // 合法配置加密落盘并支持解密解析
         when(llmConfigMapper.selectById(101L)).thenReturn(null);
         ArgumentCaptor<ImUserLlmConfig> captor = ArgumentCaptor.forClass(ImUserLlmConfig.class);
 
@@ -138,21 +144,25 @@ class V21ProductFeaturesTest {
 
         RateLimitService service = new RateLimitService(redisTemplate, props);
 
+        // 公共用户触发全站 501 > 500 成本熔断
         BizException ex = assertThrows(BizException.class, () -> service.checkAgentTriggerAllowed(2001L, false));
         assertEquals(ErrorCode.AGENT_QUOTA_EXCEEDED.getCode(), ex.getCode());
 
+        // 启用 BYOK 自带 API Key 的用户不受全站公共熔断限制
         service.checkAgentTriggerAllowed(2001L, true);
     }
 
     @Test
     void friendServiceShouldBlockDirectChatWhenBlockedOrNotFriend() {
         FriendService service = new FriendService(
-                friendshipMapper, friendRequestMapper, userMapper, redisTemplate, messagePushHelper);
+                friendshipMapper, friendRequestMapper, userMapper, redisTemplate, messagePushHelper, mockPresenceService);
 
+        // 1. 非好友禁止私聊
         when(friendshipMapper.selectOne(any())).thenReturn(null, null);
         BizException nonFriend = assertThrows(BizException.class, () -> service.assertCanDirectChat(1L, 2L));
         assertEquals(ErrorCode.FORBIDDEN.getCode(), nonFriend.getCode());
 
+        // 2. 被对方拉黑返回拒收提示
         ImFriendship myFriendEdge = new ImFriendship();
         myFriendEdge.setStatus(FriendService.STATUS_FRIEND);
         ImFriendship peerBlockedEdge = new ImFriendship();
@@ -161,6 +171,7 @@ class V21ProductFeaturesTest {
         BizException blocked = assertThrows(BizException.class, () -> service.assertCanDirectChat(1L, 2L));
         assertTrue(blocked.getMessage().contains("拒收"));
 
+        // 3. 互为好友放行
         ImFriendship mutual1 = new ImFriendship();
         mutual1.setStatus(FriendService.STATUS_FRIEND);
         ImFriendship mutual2 = new ImFriendship();
@@ -211,7 +222,7 @@ class V21ProductFeaturesTest {
     void groupJoinApprovalShouldQueuePendingRequestForMemberAndEnforceAdminForAnnouncement() {
         ConversationService service = new ConversationService(
                 conversationMapper, conversationMemberMapper, groupJoinRequestMapper,
-                userMapper, mockUserService, mockFriendService, mockUnreadService,
+                userMapper, mockUserService, mockFriendService, mockPresenceService, mockUnreadService,
                 messagePushHelper, redisTemplate
         );
 
@@ -245,6 +256,7 @@ class V21ProductFeaturesTest {
         when(groupJoinRequestMapper.selectList(any())).thenReturn(List.of());
         when(conversationMemberMapper.selectList(any())).thenReturn(List.of(ownerMember));
 
+        // 1. 开启进群确认后，普通成员拉人不会直接入群，而是生成待审核申请
         ConversationService.InviteGroupOutcome outcome =
                 service.inviteGroupMembers(1002L, 5001L, List.of(1003L));
         assertEquals(0, outcome.result().getJoinedCount());
@@ -252,8 +264,86 @@ class V21ProductFeaturesTest {
         verify(groupJoinRequestMapper).insert(any(ImGroupJoinRequest.class));
         verify(conversationMemberMapper, never()).insert(any(ImConversationMember.class));
 
+        // 2. 普通成员无权修改群公告或群验证开关
         BizException annEx = assertThrows(BizException.class,
                 () -> service.updateGroupAnnouncement(1002L, 5001L, "新公告"));
         assertEquals(ErrorCode.FORBIDDEN.getCode(), annEx.getCode());
+    }
+
+    @Test
+    void markUnreadAndDeleteChatShouldUpdateMemberStateWithoutDeletingMembership() {
+        ConversationService service = new ConversationService(
+                conversationMapper, conversationMemberMapper, groupJoinRequestMapper,
+                userMapper, mockUserService, mockFriendService, mockPresenceService, mockUnreadService,
+                messagePushHelper, redisTemplate
+        );
+
+        ImConversation conv = new ImConversation();
+        conv.setId(6001L);
+        conv.setType(1);
+        conv.setCurrentSeq(42L);
+
+        when(redisTemplate.opsForSet()).thenReturn(setOps);
+        when(setOps.members(anyString())).thenReturn(java.util.Set.of("1001", "1002"));
+        when(conversationMapper.selectById(6001L)).thenReturn(conv);
+
+        // 1. 手动标为未读
+        service.markAsUnread(1001L, 6001L);
+        verify(conversationMemberMapper).markManualUnread(6001L, 1001L);
+        verify(mockUnreadService).markManualUnreadCache(1001L, 6001L);
+
+        // 2. 删除该聊天：仅隐藏并记录 cleared_before_seq=42，不删除成员行
+        service.deleteChatForMe(1001L, 6001L);
+        verify(conversationMemberMapper).hideAndClearForMember(6001L, 1001L, 42L);
+        verify(mockUnreadService).clearUserConvUnread(1001L, 6001L);
+        verify(conversationMemberMapper, never()).deleteById(any(Long.class));
+    }
+
+    @Test
+    void presenceServiceShouldRespectAllNoneExceptOnlyModesAndSuppressStealthRead() {
+        PresenceService presenceService = new PresenceService(userMapper, presenceRuleMapper, redisTemplate);
+
+        ImUser alice = new ImUser();
+        alice.setId(7001L);
+        alice.setPresenceMode(PresenceService.MODE_NONE);
+
+        ImUser bob = new ImUser();
+        bob.setId(7002L);
+        bob.setPresenceMode(PresenceService.MODE_EXCEPT);
+
+        ImUser charlie = new ImUser();
+        charlie.setId(7003L);
+        charlie.setPresenceMode(PresenceService.MODE_ONLY);
+
+        when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.multiGet(anyList())).thenReturn(List.of("gw-1", "gw-1", "gw-1"));
+        when(userMapper.selectBatchIds(anyList())).thenReturn(List.of(alice, bob, charlie));
+
+        ImUserPresenceRule bobHideViewer = new ImUserPresenceRule();
+        bobHideViewer.setUserId(7002L);
+        bobHideViewer.setRuleType(PresenceService.MODE_EXCEPT);
+        bobHideViewer.setTargetUserId(9001L);
+
+        ImUserPresenceRule charlieAllowViewer = new ImUserPresenceRule();
+        charlieAllowViewer.setUserId(7003L);
+        charlieAllowViewer.setRuleType(PresenceService.MODE_ONLY);
+        charlieAllowViewer.setTargetUserId(9001L);
+
+        when(presenceRuleMapper.selectList(any())).thenReturn(
+                List.of(bobHideViewer),
+                List.of(charlieAllowViewer)
+        );
+
+        java.util.Map<Long, Boolean> visible = presenceService.resolveVisibleOnlineMap(9001L, List.of(7001L, 7002L, 7003L));
+        // alice=NONE -> 隐身离线；bob=EXCEPT(含9001) -> 隐身离线；charlie=ONLY(含9001) -> 可见在线
+        assertEquals(false, visible.get(7001L));
+        assertEquals(false, visible.get(7002L));
+        assertEquals(true, visible.get(7003L));
+
+        // 测试策略对象的群聊隐身判定（忽略 AI 机器人 10000L）
+        PresenceService.UserPresencePolicy onlyPolicy = new PresenceService.UserPresencePolicy(
+                PresenceService.MODE_ONLY, java.util.Set.of(), java.util.Set.of(9001L));
+        assertEquals(false, onlyPolicy.isStealthInMembers(7003L, List.of(7003L, 9001L, 10000L)));
+        assertEquals(true, onlyPolicy.isStealthInMembers(7003L, List.of(7003L, 9001L, 9002L)));
     }
 }

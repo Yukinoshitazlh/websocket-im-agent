@@ -21,5 +21,8 @@ public class ImConversationMember {
     private String groupRemark;
     private String groupNickname;
     private Integer showMemberNickname;
+    private Integer manualUnread;
+    private Integer hidden;
+    private Long clearedBeforeSeq;
     private LocalDateTime joinedAt;
 }

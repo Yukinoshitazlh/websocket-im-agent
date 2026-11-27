@@ -38,6 +38,7 @@ class MessageServiceIdempotencyTest {
     @Mock private UserService userService;
     @Mock private ConversationService conversationService;
     @Mock private FriendService friendService;
+    @Mock private PresenceService presenceService;
     @Mock private SeqGeneratorService seqGeneratorService;
     @Mock private UnreadService unreadService;
     @Mock private AgentBridgeService agentBridgeService;
@@ -54,7 +55,8 @@ class MessageServiceIdempotencyTest {
     @BeforeEach
     void setUp() {
         messageService = new MessageService(
-                messageMapper, conversationMapper, userMapper, userService, conversationService, friendService,
+                messageMapper, conversationMapper, userMapper, userService, conversationService,
+                friendService, presenceService,
                 seqGeneratorService, unreadService, agentBridgeService, rateLimitService, messageCollabService,
                 redisTemplate, rabbitTemplate, transactionTemplate, objectMapper, Runnable::run
         );
@@ -102,5 +104,29 @@ class MessageServiceIdempotencyTest {
         assertEquals(9002L, ack.getMsgId());
         verify(valueOperations).set(eq("im:idemp:2001:c-race-1"), anyString(), any(Duration.class));
         verify(rabbitTemplate, never()).convertAndSend(anyString(), anyString(), any(Object.class));
+    }
+
+    @Test
+    void shouldSuppressAutoAckWhenStealthButAllowManualAck() {
+        List<Long> members = List.of(2001L, 2002L);
+        when(conversationService.listMemberIds(1001L)).thenReturn(members);
+        when(presenceService.isStealthInConversation(2001L, members)).thenReturn(true);
+
+        // 1. 隐身态下自动已读上报被静默拦截，不推进水位
+        messageService.ackRead(2001L, 1001L, 15L);
+        verify(unreadService, never()).markAsRead(any(), any(), any());
+
+        // 2. 手动标为已读无视隐身拦截，正常推进水位并向对方推送 READ_RECEIPT
+        com.imagent.server.entity.ImConversation conv = new com.imagent.server.entity.ImConversation();
+        conv.setId(1001L);
+        conv.setCurrentSeq(15L);
+        when(conversationMapper.selectById(1001L)).thenReturn(conv);
+        when(unreadService.markAsRead(2001L, 1001L, 15L)).thenReturn(true);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.multiGet(any())).thenReturn(List.of("gateway-1"));
+
+        messageService.ackReadManual(2001L, 1001L);
+        verify(unreadService).markAsRead(2001L, 1001L, 15L);
+        verify(rabbitTemplate).convertAndSend(anyString(), anyString(), any(Object.class));
     }
 }

@@ -21,6 +21,7 @@ public class ImUser {
     private String bio;
     private String statusEmoji;
     private String statusText;
+    private String presenceMode;
     private Integer userType;
     private Integer status;
     private Integer tokenVersion;

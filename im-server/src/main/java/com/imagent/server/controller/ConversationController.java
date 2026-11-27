@@ -75,6 +75,33 @@ public class ConversationController {
     }
 
     /**
+     * 将会话标为未读
+     */
+    @PostMapping("/{convId}/unread")
+    public Result<Void> markAsUnread(@PathVariable Long convId) {
+        conversationService.markAsUnread(UserContext.getUserId(), convId);
+        return Result.ok();
+    }
+
+    /**
+     * 手动标为已读（隐身模式下也会立即生效并向对方发送已读回执）
+     */
+    @PostMapping("/{convId}/read")
+    public Result<Void> markAsReadAll(@PathVariable Long convId) {
+        messageService.ackReadManual(UserContext.getUserId(), convId);
+        return Result.ok();
+    }
+
+    /**
+     * 删除该聊天（仅对当前用户隐藏会话并清空个人历史消息记录，不退出群聊、不删除好友）
+     */
+    @DeleteMapping("/{convId}")
+    public Result<Void> deleteChat(@PathVariable Long convId) {
+        conversationService.deleteChatForMe(UserContext.getUserId(), convId);
+        return Result.ok();
+    }
+
+    /**
      * 发布或清空群公告 + 发布系统通知提醒全群成员
      */
     @PutMapping("/{convId}/announcement")

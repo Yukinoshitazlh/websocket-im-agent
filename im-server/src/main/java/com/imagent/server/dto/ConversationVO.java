@@ -22,6 +22,7 @@ public class ConversationVO {
     private Boolean joinApprovalRequired;
     private String myGroupNickname;
     private Boolean showMemberNickname;
+    private Boolean stealthActive;
     private Integer pendingJoinRequestCount;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long ownerId;

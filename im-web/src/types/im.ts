@@ -41,6 +41,14 @@ export interface UserLlmConfig {
   hasApiKey: boolean;
 }
 
+export type PresenceMode = 'ALL' | 'EXCEPT' | 'ONLY' | 'NONE';
+
+export interface PresenceSettings {
+  mode: PresenceMode;
+  exceptUserIds: string[];
+  onlyUserIds: string[];
+}
+
 export interface AuthResponse {
   token: string;
   user: UserProfile;
@@ -82,6 +90,7 @@ export interface Conversation {
   joinApprovalRequired?: boolean;
   myGroupNickname?: string;
   showMemberNickname?: boolean;
+  stealthActive?: boolean;
   pendingJoinRequestCount?: number;
   ownerId?: string | null;
   currentSeq: number;
