@@ -7,6 +7,7 @@ import com.imagent.server.dto.AuthResponse;
 import com.imagent.server.dto.CaptchaVO;
 import com.imagent.server.dto.LoginRequest;
 import com.imagent.server.dto.RegisterRequest;
+import com.imagent.server.dto.ResetPasswordRequest;
 import com.imagent.server.dto.SendEmailCodeRequest;
 import com.imagent.server.dto.SendEmailCodeVO;
 import com.imagent.server.dto.WsTicketVO;
@@ -60,6 +61,24 @@ public class AuthController {
     public Result<AuthResponse> login(@Valid @RequestBody LoginRequest request,
                                       HttpServletRequest httpRequest) {
         return Result.ok(userService.login(request, extractClientIp(httpRequest)));
+    }
+
+    @PostMapping("/password-reset/code")
+    public Result<SendEmailCodeVO> sendPasswordResetCode(@Valid @RequestBody SendEmailCodeRequest request,
+                                                         HttpServletRequest httpRequest) {
+        return Result.ok(userService.sendPasswordResetCode(
+                request.getEmail(),
+                request.getCaptchaId(),
+                request.getCaptchaCode(),
+                extractClientIp(httpRequest)
+        ));
+    }
+
+    @PostMapping("/password-reset/confirm")
+    public Result<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request,
+                                      HttpServletRequest httpRequest) {
+        userService.resetPasswordByEmail(request, extractClientIp(httpRequest));
+        return Result.ok();
     }
 
     /**

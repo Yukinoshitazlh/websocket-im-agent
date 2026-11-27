@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
   ArrowDown,
+  ArrowLeft,
   AtSign,
   Bell,
   BellOff,
@@ -29,6 +30,7 @@ import { useChatStore } from './stores/chat';
 import AuthView from './components/AuthView.vue';
 import NavRail from './components/NavRail.vue';
 import SidebarRail from './components/SidebarRail.vue';
+import ContactsPanel from './components/ContactsPanel.vue';
 import MessageItem from './components/MessageItem.vue';
 import AgentStreamCard from './components/AgentStreamCard.vue';
 import ApprovalCard from './components/ApprovalCard.vue';
@@ -641,10 +643,16 @@ function handleAiSummarizeSelected() {
     <!-- 未登录 -->
     <AuthView v-if="!store.token || !store.currentUser" key="auth" />
 
-    <!-- 主工作台（60px 极简导航竖条 + 276px 会话栏 + 宽敞主聊天区 + 按需滑出右侧抽屉） -->
-    <div v-else key="workbench" class="workbench">
+    <!-- 主工作台（PC 三栏 + 手机端单栏抽屉自适应切换） -->
+    <div
+      v-else
+      key="workbench"
+      class="workbench"
+      :class="{ 'mobile-in-chat': store.navTab === 'chats' && Boolean(store.activeConvId) }"
+    >
       <NavRail />
-      <SidebarRail @open-group-modal="showGroupModal = true" />
+      <SidebarRail v-if="store.navTab === 'chats'" @open-group-modal="showGroupModal = true" />
+      <ContactsPanel v-else />
 
       <main
         class="chat-stage glass"
@@ -664,9 +672,18 @@ function handleAiSummarizeSelected() {
           </div>
         </Transition>
 
-        <!-- 顶栏（极简微信/飞书风格：搜索 / 群管理 / AI 助手 + 右上角个人头像资料入口） -->
+        <!-- 顶栏（手机端自动出现左侧返回按钮，切回会话列表） -->
         <header class="chat-header">
           <div class="header-left">
+            <button
+              v-if="store.activeConversation"
+              type="button"
+              class="btn-icon mobile-back-btn"
+              title="返回会话列表"
+              @click="store.activeConvId = null; showInspector = false"
+            >
+              <ArrowLeft :size="18" />
+            </button>
             <template v-if="store.activeConversation">
               <Transition name="tab-swap" mode="out-in">
                 <button
@@ -1455,6 +1472,21 @@ function handleAiSummarizeSelected() {
   position: relative;
 }
 
+.header-more-btn {
+  position: relative;
+}
+
+.header-more-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 2px var(--surface-strong);
+}
+
 .chat-menu-popover {
   position: absolute;
   top: calc(100% + 8px);
@@ -1754,7 +1786,62 @@ function handleAiSummarizeSelected() {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 0 16px;
+  padding: 6px 16px 0;
+}
+
+.stealth-capsule {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 5px 10px 5px 12px;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.24);
+  font-size: 12px;
+  color: var(--ink);
+  max-width: 100%;
+}
+
+.stealth-cap-left,
+.stealth-cap-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stealth-ic {
+  color: #7c3aed;
+  flex-shrink: 0;
+}
+
+.stealth-read-btn {
+  padding: 3px 9px !important;
+  font-size: 11.5px !important;
+  border-radius: 999px !important;
+}
+
+.stealth-synced-tag {
+  font-size: 11px;
+  color: var(--ok);
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.stealth-cfg-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 6px;
+}
+
+.stealth-cfg-btn:hover {
+  color: var(--accent);
+  background: var(--hover);
 }
 
 .digest-capsule {
@@ -2466,9 +2553,62 @@ function handleAiSummarizeSelected() {
   animation: spin 1s linear infinite;
 }
 
+.mobile-back-btn {
+  display: none;
+  flex-shrink: 0;
+}
+
 @media (max-width: 1060px) {
   .workbench :deep(.inspector) {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 90;
+    width: min(340px, calc(100vw - 24px));
+    box-shadow: var(--shadow-md);
+  }
+}
+
+@media (max-width: 768px) {
+  .workbench {
+    flex-direction: column;
+    padding: 8px;
+    gap: 8px;
+    height: 100dvh;
+  }
+
+  .workbench:not(.mobile-in-chat) .chat-stage {
     display: none;
+  }
+
+  .workbench.mobile-in-chat :deep(.nav-rail),
+  .workbench.mobile-in-chat :deep(.sidebar),
+  .workbench.mobile-in-chat :deep(.contacts-rail) {
+    display: none;
+  }
+
+  .workbench.mobile-in-chat .chat-stage {
+    flex: 1;
+    height: 100%;
+    border-radius: 18px;
+  }
+
+  .mobile-back-btn {
+    display: inline-flex;
+  }
+
+  .peer-status-pill {
+    display: none;
+  }
+
+  .workbench :deep(.inspector) {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+    border-radius: 18px;
   }
 }
 </style>

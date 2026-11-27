@@ -102,6 +102,7 @@ im:
     agent-bucket-capacity: ${AGENT_RL_CAPACITY:5}
     agent-refill-per-second: ${AGENT_RL_REFILL:0.2}
     agent-daily-quota: ${AGENT_DAILY_QUOTA:100}
+    agent-global-daily-quota: ${AGENT_GLOBAL_DAILY_QUOTA:500}
   storage:
     mode: ${STORAGE_MODE:AUTO}
     local-dir: ${STORAGE_LOCAL_DIR:./uploads}

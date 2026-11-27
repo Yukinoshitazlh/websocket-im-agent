@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import {
+  Ban,
+  Bell,
+  BellOff,
   Camera,
   Check,
   ChevronDown,
   ChevronUp,
   Copy,
+  Cpu,
   Eye,
   EyeOff,
   FlaskConical,
@@ -15,6 +19,9 @@ import {
   Moon,
   RotateCcw,
   Sun,
+  UserCheck,
+  UserMinus,
+  UserPlus,
   Volume2,
   VolumeX,
   X
@@ -79,7 +86,34 @@ const showNewPwd = ref(false);
 const showConfirmPwd = ref(false);
 const savingPassword = ref(false);
 
+// 自定义 AI 大模型（BYOK）状态
+const showLlmBox = ref(false);
+const llmEnabled = ref(false);
+const llmBaseUrl = ref('https://api.deepseek.com/v1');
+const llmModel = ref('deepseek-chat');
+const llmApiKey = ref('');
+const llmKeyMask = ref('');
+const llmHasKey = ref(false);
+const showLlmKey = ref(false);
+const savingLlm = ref(false);
+
+// 他人名片好友申请与关系操作
+const friendRemark = ref('');
+const relationBusy = ref(false);
+
 const avatarInputRef = ref<HTMLInputElement | null>(null);
+
+async function syncMyLlmConfig() {
+  if (!isSelf.value) return;
+  const cfg = await store.loadMyLlmConfig();
+  if (cfg) {
+    llmEnabled.value = cfg.enabled;
+    llmBaseUrl.value = cfg.baseUrl || 'https://api.deepseek.com/v1';
+    llmModel.value = cfg.model || 'deepseek-chat';
+    llmKeyMask.value = cfg.apiKeyMask || '';
+    llmHasKey.value = cfg.hasApiKey;
+  }
+}
 
 watch(
   () => props.profile,
@@ -103,6 +137,13 @@ watch(
     showOldPwd.value = false;
     showNewPwd.value = false;
     showConfirmPwd.value = false;
+    showLlmBox.value = false;
+    llmApiKey.value = '';
+    showLlmKey.value = false;
+    friendRemark.value = '';
+    if (isSelf.value) {
+      syncMyLlmConfig();
+    }
   },
   { immediate: true }
 );
@@ -283,9 +324,99 @@ async function copyUsername() {
   }
 }
 
+async function handleSaveLlmConfig(clearKey = false) {
+  savingLlm.value = true;
+  try {
+    const saved = await store.saveMyLlmConfig(
+      clearKey
+        ? { clearApiKey: true }
+        : {
+            enabled: llmEnabled.value,
+            baseUrl: llmBaseUrl.value.trim(),
+            model: llmModel.value.trim(),
+            apiKey: llmApiKey.value.trim() || undefined
+          }
+    );
+    if (saved) {
+      llmEnabled.value = saved.enabled;
+      llmBaseUrl.value = saved.baseUrl;
+      llmModel.value = saved.model;
+      llmKeyMask.value = saved.apiKeyMask;
+      llmHasKey.value = saved.hasApiKey;
+      llmApiKey.value = '';
+      showLlmKey.value = false;
+    }
+  } catch (err: any) {
+    store.pushToast(err.message || '保存自定义 AI 配置失败', 'error');
+  } finally {
+    savingLlm.value = false;
+  }
+}
+
+async function handleSendFriendReq() {
+  relationBusy.value = true;
+  try {
+    await store.sendFriendRequest(props.profile.id, friendRemark.value.trim());
+    friendRemark.value = '';
+  } catch (err: any) {
+    store.pushToast(err.message || '发送好友申请失败', 'error');
+  } finally {
+    relationBusy.value = false;
+  }
+}
+
+async function handleAcceptFriendReq() {
+  if (!props.profile.pendingRequestId) return;
+  relationBusy.value = true;
+  try {
+    await store.acceptFriendRequest(props.profile.pendingRequestId);
+    emit('close');
+  } catch (err: any) {
+    store.pushToast(err.message || '同意好友申请失败', 'error');
+  } finally {
+    relationBusy.value = false;
+  }
+}
+
+async function handleDeleteFriend() {
+  if (!window.confirm(`确定解除与「${props.profile.nickname}」的好友关系吗？`)) return;
+  relationBusy.value = true;
+  try {
+    await store.deleteFriend(props.profile.id);
+  } catch (err: any) {
+    store.pushToast(err.message || '删除好友失败', 'error');
+  } finally {
+    relationBusy.value = false;
+  }
+}
+
+async function handleBlockUser() {
+  if (!window.confirm(`拉黑「${props.profile.nickname}」后将拒收对方私聊与好友申请，确认继续？`)) return;
+  relationBusy.value = true;
+  try {
+    await store.blockUser(props.profile.id);
+  } catch (err: any) {
+    store.pushToast(err.message || '拉黑失败', 'error');
+  } finally {
+    relationBusy.value = false;
+  }
+}
+
+async function handleUnblockUser() {
+  relationBusy.value = true;
+  try {
+    await store.unblockUser(props.profile.id);
+  } catch (err: any) {
+    store.pushToast(err.message || '解除拉黑失败', 'error');
+  } finally {
+    relationBusy.value = false;
+  }
+}
+
 async function startDirectChat() {
   try {
     await store.startDirect(props.profile.id);
+    store.setNavTab('chats');
     emit('close');
   } catch (err: any) {
     store.pushToast(err.message || '打开私聊失败', 'error');
@@ -455,6 +586,22 @@ function previewSound() {
 
           <div class="pref-row">
             <div class="pref-info">
+              <Bell v-if="store.desktopNotifyEnabled" :size="15" />
+              <BellOff v-else :size="15" />
+              <span>浏览器系统桌面通知（切后台提醒）</span>
+            </div>
+            <button
+              type="button"
+              class="switch-btn"
+              :class="{ on: store.desktopNotifyEnabled }"
+              @click="store.toggleDesktopNotify"
+            >
+              <span class="switch-knob" />
+            </button>
+          </div>
+
+          <div class="pref-row">
+            <div class="pref-info">
               <Moon v-if="store.theme === 'dark'" :size="15" />
               <Sun v-else :size="15" />
               <span>深色暗夜液态玻璃</span>
@@ -562,6 +709,92 @@ function previewSound() {
               >
                 {{ savingEmail ? '提交中...' : profile.email ? '确认更换邮箱' : '确认绑定邮箱' }}
               </button>
+            </div>
+          </Transition>
+        </section>
+
+        <!-- 折叠式：自定义 AI 大模型（BYOK，AES-256-GCM 加密存储） -->
+        <section class="section">
+          <button
+            type="button"
+            class="collapse-head"
+            @click="showLlmBox = !showLlmBox"
+          >
+            <span class="collapse-left">
+              <Cpu :size="14" />
+              <span>自定义 AI 大模型（BYOK）</span>
+            </span>
+            <span class="collapse-right">
+              <span class="email-badge" :class="{ empty: !llmEnabled }">
+                {{ llmEnabled ? (llmModel || '已启用') : '公共额度' }}
+              </span>
+              <ChevronUp v-if="showLlmBox" :size="15" />
+              <ChevronDown v-else :size="15" />
+            </span>
+          </button>
+
+          <Transition name="slide-up">
+            <div v-if="showLlmBox" class="pwd-panel">
+              <div class="pref-row">
+                <span class="byok-tip">启用自带 API Key（不受全站公共配额限制）</span>
+                <button
+                  type="button"
+                  class="switch-btn"
+                  :class="{ on: llmEnabled }"
+                  @click="llmEnabled = !llmEnabled"
+                >
+                  <span class="switch-knob" />
+                </button>
+              </div>
+
+              <input
+                v-model="llmBaseUrl"
+                class="input"
+                placeholder="OpenAI 兼容 Base URL，如 https://api.deepseek.com/v1"
+              />
+              <input
+                v-model="llmModel"
+                class="input"
+                placeholder="模型名称，如 deepseek-chat / gpt-4o-mini"
+              />
+              <div class="pwd-input-wrap">
+                <input
+                  v-model="llmApiKey"
+                  :type="showLlmKey ? 'text' : 'password'"
+                  class="input with-eye"
+                  :placeholder="llmHasKey ? `已加密保存（${llmKeyMask}），留空则沿用原 Key` : '输入你的 API Key（AES-256-GCM 加密存储）'"
+                  autocomplete="off"
+                />
+                <button
+                  type="button"
+                  class="pwd-eye-btn"
+                  :title="showLlmKey ? '隐藏 Key' : '显示 Key'"
+                  @click="showLlmKey = !showLlmKey"
+                >
+                  <EyeOff v-if="showLlmKey" :size="15" />
+                  <Eye v-else :size="15" />
+                </button>
+              </div>
+
+              <div class="byok-actions">
+                <button
+                  v-if="llmHasKey"
+                  type="button"
+                  class="btn btn-ghost btn-xs danger-text"
+                  :disabled="savingLlm"
+                  @click="handleSaveLlmConfig(true)"
+                >
+                  清除 Key
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary btn-xs"
+                  :disabled="savingLlm"
+                  @click="handleSaveLlmConfig(false)"
+                >
+                  {{ savingLlm ? '保存中...' : '保存 AI 配置' }}
+                </button>
+              </div>
             </div>
           </Transition>
         </section>
@@ -687,11 +920,109 @@ function previewSound() {
           </div>
         </div>
 
-        <div v-if="profile.userType !== 2" class="modal-footer">
-          <button type="button" class="btn btn-primary" @click="startDirectChat">
-            <MessageCircle :size="15" />
-            <span>发消息</span>
-          </button>
+        <div v-if="profile.userType !== 2" class="relation-footer">
+          <!-- 非好友：支持附言发送好友申请 -->
+          <div v-if="!profile.relationStatus || profile.relationStatus === 'NONE'" class="add-friend-box">
+            <input
+              v-model="friendRemark"
+              class="input"
+              maxlength="80"
+              placeholder="附言（可选）：你好，我是..."
+            />
+            <div class="modal-footer">
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs danger-text"
+                :disabled="relationBusy"
+                @click="handleBlockUser"
+              >
+                <Ban :size="13" />
+                <span>拉黑</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="relationBusy"
+                @click="handleSendFriendReq"
+              >
+                <UserPlus :size="15" />
+                <span>{{ relationBusy ? '发送中...' : '添加好友' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 已是好友：发消息 / 删除好友 / 拉黑 -->
+          <div v-else-if="profile.relationStatus === 'FRIEND'" class="modal-footer spread">
+            <div class="left-danger-actions">
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs danger-text"
+                :disabled="relationBusy"
+                @click="handleDeleteFriend"
+              >
+                <UserMinus :size="13" />
+                <span>删好友</span>
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs danger-text"
+                :disabled="relationBusy"
+                @click="handleBlockUser"
+              >
+                <Ban :size="13" />
+                <span>拉黑</span>
+              </button>
+            </div>
+            <button type="button" class="btn btn-primary" @click="startDirectChat">
+              <MessageCircle :size="15" />
+              <span>发消息</span>
+            </button>
+          </div>
+
+          <!-- 对方已向我发送好友申请 -->
+          <div v-else-if="profile.relationStatus === 'PENDING_IN'" class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs danger-text"
+              :disabled="relationBusy"
+              @click="handleBlockUser"
+            >
+              <Ban :size="13" />
+              <span>拉黑</span>
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="relationBusy"
+              @click="handleAcceptFriendReq"
+            >
+              <Check :size="15" />
+              <span>同意好友申请</span>
+            </button>
+          </div>
+
+          <!-- 我已发送好友申请等待对方验证 -->
+          <div v-else-if="profile.relationStatus === 'PENDING_OUT'" class="modal-footer">
+            <button type="button" class="btn btn-ghost" disabled>已发送好友申请，等待对方通过</button>
+          </div>
+
+          <!-- 我已拉黑对方 -->
+          <div v-else-if="profile.relationStatus === 'BLOCKED'" class="modal-footer">
+            <button
+              type="button"
+              class="btn btn-primary"
+              :disabled="relationBusy"
+              @click="handleUnblockUser"
+            >
+              <UserCheck :size="15" />
+              <span>解除拉黑</span>
+            </button>
+          </div>
+
+          <!-- 被对方拉黑 -->
+          <div v-else-if="profile.relationStatus === 'BLOCKED_BY'" class="modal-footer">
+            <span class="blocked-tip">对方已开启拒收，暂无法添加好友或私聊</span>
+          </div>
         </div>
       </div>
     </div>
@@ -917,6 +1248,63 @@ function previewSound() {
 .custom-status-row {
   display: flex;
   gap: 7px;
+}
+
+.presence-entry-row {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--rail);
+  border-radius: 12px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 12.5px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.presence-entry-row:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+
+.pe-left,
+.pe-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pe-ic {
+  color: var(--ok);
+}
+
+.pe-ic.stealth {
+  color: #7c3aed;
+}
+
+.pe-badge {
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--ok);
+}
+
+.pe-badge.stealth {
+  background: rgba(124, 58, 237, 0.14);
+  color: #7c3aed;
+}
+
+.pe-link {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .emoji-input {
@@ -1150,7 +1538,41 @@ function previewSound() {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   padding-top: 6px;
+}
+
+.modal-footer.spread {
+  justify-content: space-between;
+}
+
+.left-danger-actions,
+.byok-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.byok-tip {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
+.relation-footer,
+.add-friend-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.blocked-tip {
+  font-size: 12px;
+  color: var(--ink-muted);
 }
 </style>

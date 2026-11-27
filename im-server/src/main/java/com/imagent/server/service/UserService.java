@@ -12,6 +12,7 @@ import com.imagent.server.dto.AuthResponse;
 import com.imagent.server.dto.ChangePasswordRequest;
 import com.imagent.server.dto.LoginRequest;
 import com.imagent.server.dto.RegisterRequest;
+import com.imagent.server.dto.ResetPasswordRequest;
 import com.imagent.server.dto.SendEmailCodeVO;
 import com.imagent.server.dto.UpdateEmailRequest;
 import com.imagent.server.dto.UpdateProfileRequest;
@@ -271,6 +272,70 @@ public class UserService {
     }
 
     /**
+     * 找回密码：发送邮箱重置验证码（校验邮箱已绑定有效账号）
+     */
+    public SendEmailCodeVO sendPasswordResetCode(String rawEmail, String captchaId, String captchaCode, String clientIp) {
+        String email = authSecurityService.normalizeEmail(rawEmail);
+        ImUser user = userMapper.selectOne(new LambdaQueryWrapper<ImUser>()
+                .eq(ImUser::getEmail, email)
+                .eq(ImUser::getUserType, 1)
+                .last("LIMIT 1"));
+        if (user == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "该邮箱尚未绑定任何账号");
+        }
+        if (!Integer.valueOf(1).equals(user.getStatus())) {
+            throw new BizException(ErrorCode.FORBIDDEN, "账号已被禁用，无法重置密码");
+        }
+        return authSecurityService.sendPasswordResetCode(email, captchaId, captchaCode, clientIp);
+    }
+
+    /**
+     * 找回密码：校验邮箱验证码并重置登录密码，同时递增 token_version 强制踢出全部旧端并解除登录锁定
+     */
+    public void resetPasswordByEmail(ResetPasswordRequest req, String clientIp) {
+        ServerSecurityProperties.AuthPolicy auth = securityProperties.getAuth();
+        authSecurityService.checkIpRateLimit("pwd_reset", clientIp, auth.getIpLoginMaxPerMinute(), Duration.ofMinutes(1));
+        authSecurityService.assertPasswordStrength(req.getNewPassword());
+
+        String email = authSecurityService.normalizeEmail(req.getEmail());
+        authSecurityService.verifyPasswordResetCode(email, req.getEmailCode());
+
+        ImUser user = userMapper.selectOne(new LambdaQueryWrapper<ImUser>()
+                .eq(ImUser::getEmail, email)
+                .eq(ImUser::getUserType, 1)
+                .last("LIMIT 1"));
+        if (user == null) {
+            throw new BizException(ErrorCode.NOT_FOUND, "该邮箱尚未绑定任何账号");
+        }
+        if (!Integer.valueOf(1).equals(user.getStatus())) {
+            throw new BizException(ErrorCode.FORBIDDEN, "账号已被禁用，无法重置密码");
+        }
+
+        int nextVersion = (user.getTokenVersion() == null ? 1 : user.getTokenVersion()) + 1;
+        ImUser update = new ImUser();
+        update.setId(user.getId());
+        update.setPasswordHash(passwordEncoder.encode(req.getNewPassword()));
+        update.setTokenVersion(nextVersion);
+        userMapper.updateById(update);
+
+        tokenVersionService.cacheState(user.getId(), nextVersion, 1);
+        authSecurityService.clearLoginFailures(email);
+        if (user.getUsername() != null) {
+            authSecurityService.clearLoginFailures(user.getUsername());
+        }
+
+        WsPacket<Map<String, Object>> forceLogout = WsPacket.of(
+                WsPacketType.FORCE_LOGOUT,
+                Map.of("reason", "PASSWORD_RESET", "message", "账号密码已通过邮箱重置，请使用新密码重新登录")
+        );
+        try {
+            messagePushHelper.pushSync(List.of(user.getId()), forceLogout);
+        } catch (Exception ignored) {
+            // 踢下线投递异常不阻断密码重置
+        }
+    }
+
+    /**
      * 修改登录密码：校验原密码与新密码强度，递增 token_version 立即作废全部旧 JWT，
      * 通过网关踢下线旧 WebSocket 连接，并向当前会话签发全新 JWT。
      */
@@ -347,7 +412,9 @@ public class UserService {
                 .last("LIMIT 20");
         if (keyword != null && !keyword.isBlank()) {
             String trimmed = keyword.trim();
-            wrapper.and(w -> w.like(ImUser::getUsername, trimmed).or().like(ImUser::getNickname, trimmed));
+            wrapper.and(w -> w.like(ImUser::getUsername, trimmed)
+                    .or().like(ImUser::getNickname, trimmed)
+                    .or().eq(ImUser::getEmail, trimmed.toLowerCase()));
         }
         return userMapper.selectList(wrapper).stream().map(u -> toVO(u, null)).toList();
     }

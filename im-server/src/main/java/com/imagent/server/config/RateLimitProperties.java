@@ -15,4 +15,6 @@ public class RateLimitProperties {
     private int agentBucketCapacity = 5;
     private double agentRefillPerSecond = 0.2;
     private int agentDailyQuota = 100;
+    /** 全站公共 AI 每日总调用熔断上限（配置自带 BYOK Key 的用户不计入此上限） */
+    private int agentGlobalDailyQuota = 500;
 }

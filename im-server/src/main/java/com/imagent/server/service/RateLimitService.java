@@ -87,6 +87,16 @@ public class RateLimitService {
     }
 
     public void checkAgentTriggerAllowed(Long userId) {
+        checkAgentTriggerAllowed(userId, false);
+    }
+
+    /**
+     * AI 触发限流与成本熔断：
+     * - 令牌桶防短时刷屏对所有用户生效；
+     * - 未启用 BYOK 时同时受“单用户日配额”和“全站每日公共总熔断上限”约束；
+     * - 启用用户自带 API Key（BYOK）后跳过全站公共日配额扣减。
+     */
+    public void checkAgentTriggerAllowed(Long userId, boolean usingByok) {
         if (!properties.isEnabled()) {
             return;
         }
@@ -101,7 +111,12 @@ public class RateLimitService {
             throw new BizException(ErrorCode.RATE_LIMITED, "@AI 调用过于频繁，请稍候几秒再试");
         }
 
-        String dailyKey = RedisKeys.agentDailyQuota(userId, LocalDate.now().format(DAY_FMT));
+        if (usingByok) {
+            return;
+        }
+
+        String day = LocalDate.now().format(DAY_FMT);
+        String dailyKey = RedisKeys.agentDailyQuota(userId, day);
         Long used = redisTemplate.opsForValue().increment(dailyKey);
         if (used != null && used == 1L) {
             redisTemplate.expire(dailyKey, Duration.ofHours(25));
@@ -109,7 +124,20 @@ public class RateLimitService {
         if (used != null && used > properties.getAgentDailyQuota()) {
             log.warn("触发 @AI 每日配额上限: userId={}, used={}", userId, used);
             throw new BizException(ErrorCode.AGENT_QUOTA_EXCEEDED,
-                    "今日 @AI 调用次数已达上限（" + properties.getAgentDailyQuota() + " 次）");
+                    "今日公共 @AI 额度已达上限（" + properties.getAgentDailyQuota() + " 次），可在个人设置中配置自己的 API Key 继续使用");
+        }
+
+        if (properties.getAgentGlobalDailyQuota() > 0) {
+            String globalKey = RedisKeys.agentGlobalDailyQuota(day);
+            Long globalUsed = redisTemplate.opsForValue().increment(globalKey);
+            if (globalUsed != null && globalUsed == 1L) {
+                redisTemplate.expire(globalKey, Duration.ofHours(25));
+            }
+            if (globalUsed != null && globalUsed > properties.getAgentGlobalDailyQuota()) {
+                log.warn("触发全站公共 @AI 成本熔断: day={}, globalUsed={}", day, globalUsed);
+                throw new BizException(ErrorCode.AGENT_QUOTA_EXCEEDED,
+                        "今日全站公共 AI 额度已触发成本保护熔断，请在个人设置中配置你自己的 API Key（BYOK）继续使用");
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import {
+  ArrowLeft,
   ArrowRight,
   Eye,
   EyeOff,
@@ -20,12 +21,13 @@ import { vGlow } from '../directives/glow';
 
 const store = useChatStore();
 
-const mode = ref<'login' | 'register'>('login');
+const mode = ref<'login' | 'register' | 'reset'>('login');
 const account = ref('');
 const email = ref('');
 const emailCode = ref('');
 const username = ref('');
 const password = ref('');
+const confirmPassword = ref('');
 const nickname = ref('');
 const inviteCode = ref('');
 const captchaId = ref('');
@@ -33,6 +35,7 @@ const captchaSvg = ref('');
 const captchaCode = ref('');
 
 const showPwd = ref(false);
+const showConfirmPwd = ref(false);
 const loading = ref(false);
 const sendingCode = ref(false);
 const cooldown = ref(0);
@@ -57,10 +60,15 @@ async function refreshCaptcha() {
   }
 }
 
-function switchMode(next: 'login' | 'register') {
+function switchMode(next: 'login' | 'register' | 'reset') {
   mode.value = next;
   errorMsg.value = '';
   infoMsg.value = '';
+  password.value = '';
+  confirmPassword.value = '';
+  emailCode.value = '';
+  showPwd.value = false;
+  showConfirmPwd.value = false;
   refreshCaptcha();
 }
 
@@ -90,7 +98,10 @@ async function handleSendEmailCode() {
   }
   sendingCode.value = true;
   try {
-    const res = await store.sendEmailCode(trimmedEmail, captchaId.value, captchaCode.value.trim());
+    const res =
+      mode.value === 'reset'
+        ? await store.sendPasswordResetCode(trimmedEmail, captchaId.value, captchaCode.value.trim())
+        : await store.sendEmailCode(trimmedEmail, captchaId.value, captchaCode.value.trim());
     startCooldown(res.cooldownSeconds || 60);
     if (res.devCodeHint) {
       infoMsg.value = `本地开发模式未配置 SMTP，测试验证码：${res.devCodeHint}`;
@@ -134,6 +145,32 @@ async function handleSubmit() {
         captchaId: captchaId.value,
         captchaCode: captchaCode.value.trim()
       });
+    } else if (mode.value === 'reset') {
+      if (!email.value.trim() || !email.value.includes('@')) {
+        errorMsg.value = '请输入绑定的邮箱地址';
+        return;
+      }
+      if (!emailCode.value.trim()) {
+        errorMsg.value = '请输入 6 位邮箱重置验证码';
+        return;
+      }
+      if (password.value.length < 8) {
+        errorMsg.value = '新密码长度至少 8 位，需包含字母和数字';
+        return;
+      }
+      if (password.value !== confirmPassword.value) {
+        errorMsg.value = '两次输入的新密码不一致';
+        return;
+      }
+      await store.resetPasswordByEmail({
+        email: email.value.trim(),
+        emailCode: emailCode.value.trim(),
+        newPassword: password.value
+      });
+      const resetEmail = email.value.trim();
+      switchMode('login');
+      account.value = resetEmail;
+      infoMsg.value = '密码已重置成功，请使用新密码登录';
     } else {
       if (!email.value.trim() || !email.value.includes('@')) {
         errorMsg.value = '请输入有效的邮箱地址';
@@ -167,7 +204,7 @@ async function handleSubmit() {
       });
     }
   } catch (e: any) {
-    errorMsg.value = e.message || '认证失败';
+    errorMsg.value = e.message || '操作失败';
     refreshCaptcha();
   } finally {
     loading.value = false;
@@ -200,7 +237,15 @@ onBeforeUnmount(() => {
       <header class="auth-header">
         <div class="brand-logo">P</div>
         <h1 class="brand-name">PulseIM</h1>
-        <p class="brand-tip">{{ mode === 'login' ? '欢迎回来，安全登录工作台' : '使用邮箱创建你的账号' }}</p>
+        <p class="brand-tip">
+          {{
+            mode === 'login'
+              ? '欢迎回来，安全登录工作台'
+              : mode === 'register'
+                ? '使用邮箱创建你的账号'
+                : '通过绑定邮箱重置登录密码'
+          }}
+        </p>
       </header>
 
       <Transition name="slide-up">
@@ -209,7 +254,7 @@ onBeforeUnmount(() => {
         </div>
       </Transition>
 
-      <div class="tab-bar">
+      <div v-if="mode !== 'reset'" class="tab-bar">
         <span class="tab-slider" :class="{ right: mode === 'register' }" />
         <button
           type="button"
@@ -229,6 +274,14 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <div v-else class="reset-bar">
+        <button type="button" class="back-login-btn" @click="switchMode('login')">
+          <ArrowLeft :size="14" />
+          <span>返回登录</span>
+        </button>
+        <span class="reset-title">找回密码</span>
+      </div>
+
       <form class="auth-form" @submit.prevent="handleSubmit">
         <!-- 登录：邮箱或用户名 -->
         <div v-if="mode === 'login'" class="input-wrap">
@@ -242,14 +295,14 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <!-- 注册：邮箱地址 -->
-        <div v-if="mode === 'register'" class="input-wrap">
+        <!-- 注册 / 找回密码：邮箱地址 -->
+        <div v-if="mode === 'register' || mode === 'reset'" class="input-wrap">
           <Mail :size="15" class="field-icon" />
           <input
             v-model="email"
             type="email"
             class="input with-icon"
-            placeholder="邮箱地址"
+            :placeholder="mode === 'reset' ? '输入账号绑定的邮箱地址' : '邮箱地址'"
             autocomplete="email"
             autofocus
           />
@@ -278,8 +331,11 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <!-- 注册：邮箱验证码 -->
-        <div v-if="mode === 'register' && store.authConfig.requireEmailCode" class="captcha-row">
+        <!-- 注册 / 找回密码：6 位邮箱验证码 -->
+        <div
+          v-if="mode === 'reset' || (mode === 'register' && store.authConfig.requireEmailCode)"
+          class="captcha-row"
+        >
           <div class="input-wrap flex-1">
             <KeyRound :size="15" class="field-icon" />
             <input
@@ -307,8 +363,14 @@ onBeforeUnmount(() => {
             v-model="password"
             :type="showPwd ? 'text' : 'password'"
             class="input with-icon with-eye"
-            :placeholder="mode === 'register' ? '密码（至少 8 位，含字母与数字）' : '密码'"
-            :autocomplete="mode === 'register' ? 'new-password' : 'current-password'"
+            :placeholder="
+              mode === 'login'
+                ? '密码'
+                : mode === 'reset'
+                  ? '新密码（至少 8 位，含字母与数字）'
+                  : '密码（至少 8 位，含字母与数字）'
+            "
+            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
           />
           <button
             type="button"
@@ -321,23 +383,36 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
+        <!-- 找回密码：确认新密码 -->
+        <div v-if="mode === 'reset'" class="input-wrap">
+          <Lock :size="15" class="field-icon" />
+          <input
+            v-model="confirmPassword"
+            :type="showConfirmPwd ? 'text' : 'password'"
+            class="input with-icon with-eye"
+            placeholder="再次确认新密码"
+            autocomplete="new-password"
+          />
+          <button
+            type="button"
+            class="eye-btn"
+            :title="showConfirmPwd ? '隐藏密码' : '显示密码'"
+            @click="showConfirmPwd = !showConfirmPwd"
+          >
+            <EyeOff v-if="showConfirmPwd" :size="15" />
+            <Eye v-else :size="15" />
+          </button>
+        </div>
+
         <!-- 注册附加信息：昵称 & 可选用户名 -->
         <div v-if="mode === 'register'" class="split-row">
           <div class="input-wrap flex-1">
             <Smile :size="15" class="field-icon" />
-            <input
-              v-model="nickname"
-              class="input with-icon"
-              placeholder="昵称（可选）"
-            />
+            <input v-model="nickname" class="input with-icon" placeholder="昵称（可选）" />
           </div>
           <div class="input-wrap flex-1">
             <User :size="15" class="field-icon" />
-            <input
-              v-model="username"
-              class="input with-icon"
-              placeholder="用户名（可选）"
-            />
+            <input v-model="username" class="input with-icon" placeholder="用户名（可选）" />
           </div>
         </div>
 
@@ -352,6 +427,10 @@ onBeforeUnmount(() => {
           />
         </div>
 
+        <div v-if="mode === 'login'" class="forgot-row">
+          <button type="button" class="forgot-link" @click="switchMode('reset')">忘记密码？</button>
+        </div>
+
         <Transition name="slide-up">
           <div v-if="infoMsg" :key="infoMsg" class="info-box">{{ infoMsg }}</div>
         </Transition>
@@ -361,13 +440,23 @@ onBeforeUnmount(() => {
         </Transition>
 
         <button type="submit" class="btn btn-primary submit-btn" :disabled="loading">
-          <span>{{ loading ? '请稍候...' : mode === 'login' ? '登录' : '创建账号' }}</span>
+          <span>
+            {{
+              loading
+                ? '请稍候...'
+                : mode === 'login'
+                  ? '登录'
+                  : mode === 'register'
+                    ? '创建账号'
+                    : '确认重置密码'
+            }}
+          </span>
           <ArrowRight v-if="!loading" :size="15" />
         </button>
       </form>
 
       <!-- 仅在开发环境 allowDemoQuickLogin=true 时展示快捷演示入口 -->
-      <footer v-if="store.authConfig.allowDemoQuickLogin" class="quick-row">
+      <footer v-if="mode === 'login' && store.authConfig.allowDemoQuickLogin" class="quick-row">
         <span class="quick-label">本地快捷体验</span>
         <div class="quick-links">
           <button type="button" class="quick-btn" @click="fillQuick('alice')">Alice</button>
@@ -385,7 +474,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 20px;
   position: relative;
 }
 
@@ -403,7 +492,7 @@ onBeforeUnmount(() => {
   border-radius: 28px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
   animation: rise-in 0.8s var(--ease-out) both;
 }
 
@@ -493,6 +582,31 @@ onBeforeUnmount(() => {
 }
 
 .tab-btn.active {
+  color: var(--ink);
+}
+
+.reset-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px;
+}
+
+.back-login-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.reset-title {
+  font-size: 13px;
+  font-weight: 700;
   color: var(--ink);
 }
 
@@ -590,6 +704,25 @@ onBeforeUnmount(() => {
   background: var(--hover);
 }
 
+.forgot-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+}
+
+.forgot-link {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.forgot-link:hover {
+  text-decoration: underline;
+}
+
 .info-box {
   padding: 8px 12px;
   border-radius: 10px;
@@ -672,5 +805,16 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+@media (max-width: 520px) {
+  .auth-card {
+    padding: 26px 20px 22px;
+    border-radius: 22px;
+  }
+  .split-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import {
+  Bell,
+  BellOff,
   FlaskConical,
   LogOut,
   MessageSquare,
@@ -8,6 +10,7 @@ import {
   Settings,
   Sun,
   User,
+  Users,
   Volume2,
   VolumeX
 } from 'lucide-vue-next';
@@ -69,12 +72,31 @@ onUnmounted(() => {
       <span v-else class="ws-dot" :class="store.wsState" />
     </button>
 
-    <!-- 中部消息入口（发起群聊已统一保留在会话栏搜索框旁 + 按钮） -->
+    <!-- 中部：消息 & 通讯录切换 -->
     <div class="nav-group">
-      <button type="button" class="nav-btn active" title="消息">
+      <button
+        type="button"
+        class="nav-btn"
+        :class="{ active: store.navTab === 'chats' }"
+        title="消息"
+        @click="store.setNavTab('chats')"
+      >
         <MessageSquare :size="20" />
         <span v-if="totalUnread > 0" class="nav-badge tabular">
           {{ totalUnread > 99 ? '99+' : totalUnread }}
+        </span>
+      </button>
+
+      <button
+        type="button"
+        class="nav-btn"
+        :class="{ active: store.navTab === 'contacts' }"
+        title="通讯录与好友申请"
+        @click="store.setNavTab('contacts')"
+      >
+        <Users :size="20" />
+        <span v-if="store.pendingFriendRequestCount > 0" class="nav-badge tabular">
+          {{ store.pendingFriendRequestCount > 99 ? '99+' : store.pendingFriendRequestCount }}
         </span>
       </button>
     </div>
@@ -123,6 +145,19 @@ onUnmounted(() => {
             <VolumeX v-else :size="15" />
             <span>新消息提示音</span>
             <span class="mini-switch" :class="{ on: store.soundEnabled }">
+              <i />
+            </span>
+          </button>
+
+          <button
+            type="button"
+            class="set-item"
+            @click="store.toggleDesktopNotify()"
+          >
+            <Bell v-if="store.desktopNotifyEnabled" :size="15" />
+            <BellOff v-else :size="15" />
+            <span>浏览器桌面通知</span>
+            <span class="mini-switch" :class="{ on: store.desktopNotifyEnabled }">
               <i />
             </span>
           </button>
@@ -398,5 +433,35 @@ onUnmounted(() => {
 
 .mini-switch.on i {
   transform: translateX(13px);
+}
+
+@media (max-width: 768px) {
+  .nav-rail {
+    order: 3;
+    width: 100%;
+    height: 58px;
+    padding: 0 14px;
+    border-radius: 18px;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .nav-group {
+    flex-direction: row;
+    gap: 18px;
+  }
+
+  .nav-bottom {
+    margin-top: 0;
+  }
+
+  .settings-popover {
+    left: auto;
+    right: 0;
+    bottom: 58px;
+    transform-origin: bottom right;
+  }
 }
 </style>

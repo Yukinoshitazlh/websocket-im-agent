@@ -44,6 +44,7 @@ public class ConversationService {
     private final ImConversationMemberMapper memberMapper;
     private final ImUserMapper userMapper;
     private final UserService userService;
+    private final FriendService friendService;
     private final UnreadService unreadService;
     private final MessagePushHelper pushHelper;
     private final StringRedisTemplate redisTemplate;
@@ -57,6 +58,7 @@ public class ConversationService {
         if (targetUser == null) {
             throw new BizException(ErrorCode.NOT_FOUND, "目标用户不存在");
         }
+        friendService.assertCanDirectChat(currentUserId, targetUserId);
 
         long minUid = Math.min(currentUserId, targetUserId);
         long maxUid = Math.max(currentUserId, targetUserId);
@@ -93,6 +95,7 @@ public class ConversationService {
         if (existingUsers.size() != uniqueMembers.size()) {
             throw new BizException(ErrorCode.BAD_REQUEST, "部分群成员用户不存在");
         }
+        friendService.assertAllFriends(ownerId, uniqueMembers);
 
         ImConversation conv = new ImConversation();
         conv.setType(2);
@@ -270,6 +273,7 @@ public class ConversationService {
         if (users.isEmpty()) {
             throw new BizException(ErrorCode.NOT_FOUND, "未找到有效用户");
         }
+        friendService.assertAllFriends(operatorId, toAdd);
         for (ImUser u : users) {
             addMember(convId, u.getId(), 1);
         }

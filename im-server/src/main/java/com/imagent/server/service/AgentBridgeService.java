@@ -55,6 +55,7 @@ public class AgentBridgeService {
     private final ImUserMapper userMapper;
     private final ConversationService conversationService;
     private final RateLimitService rateLimitService;
+    private final UserLlmConfigService userLlmConfigService;
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
 
@@ -85,6 +86,10 @@ public class AgentBridgeService {
         return submitTask(conversationId, triggerUserId, triggerMsgId, cleanPrompt);
     }
 
+    public boolean isUserUsingByok(Long userId) {
+        return userLlmConfigService.hasActiveByok(userId);
+    }
+
     /**
      * 飞书「未读一键省流总结」与微信「多选消息 AI 提炼」统一异步任务入口
      */
@@ -93,7 +98,7 @@ public class AgentBridgeService {
         if (!conversationService.isMember(convId, userId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "你不是该会话成员，无权触发 AI 总结");
         }
-        rateLimitService.checkAgentTriggerAllowed(userId);
+        rateLimitService.checkAgentTriggerAllowed(userId, userLlmConfigService.hasActiveByok(userId));
 
         String mode = req.getMode().trim().toUpperCase(Locale.ROOT);
         List<ImMessage> targetMessages;
@@ -172,17 +177,21 @@ public class AgentBridgeService {
         task.setCompletionTokens(0);
         agentTaskMapper.insert(task);
 
+        UserLlmConfigService.ResolvedLlmConfig byok = userLlmConfigService.resolveActiveConfig(triggerUserId);
         AgentTaskEvent event = AgentTaskEvent.builder()
                 .taskId(task.getId())
                 .conversationId(conversationId)
                 .triggerUserId(triggerUserId)
                 .triggerMsgId(triggerMsgId)
                 .userPrompt(prompt)
+                .customLlmBaseUrl(byok != null ? byok.baseUrl() : null)
+                .customLlmApiKey(byok != null ? byok.apiKey() : null)
+                .customLlmModel(byok != null ? byok.model() : null)
                 .build();
 
         rabbitTemplate.convertAndSend(MqConstants.AGENT_EXCHANGE, MqConstants.AGENT_TASK_ROUTING_KEY, event);
-        log.info("已异步投递 Agent 任务: taskId={}, convId={}, triggerUserId={}",
-                task.getId(), conversationId, triggerUserId);
+        log.info("已异步投递 Agent 任务: taskId={}, convId={}, triggerUserId={}, byok={}",
+                task.getId(), conversationId, triggerUserId, byok != null);
         return task.getId();
     }
 

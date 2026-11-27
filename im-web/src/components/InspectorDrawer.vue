@@ -120,7 +120,7 @@ async function searchInviteUsers() {
     return;
   }
   try {
-    const all = await store.searchUsers(kw);
+    const all = await store.loadFriends(kw);
     const existingIds = new Set(store.activeMembers.map((m) => String(m.userId)));
     inviteCandidates.value = all.filter((u) => !existingIds.has(String(u.id)));
   } catch {

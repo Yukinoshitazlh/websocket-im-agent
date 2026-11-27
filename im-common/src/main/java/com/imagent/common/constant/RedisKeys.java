@@ -78,6 +78,11 @@ public final class RedisKeys {
         return "im:rl:agent:daily:" + userId + ":" + yyyyMMdd;
     }
 
+    /** 全站每日公共 AI 总配额熔断键（防多账号刷爆成本） */
+    public static String agentGlobalDailyQuota(String yyyyMMdd) {
+        return "im:rl:agent:global:daily:" + yyyyMMdd;
+    }
+
     /** 群日程提醒延迟队列 ZSet（score = 触发时间戳 ms，member = reminderId） */
     public static String reminderDelayZSet() {
         return "im:delay:reminders";
@@ -111,6 +116,16 @@ public final class RedisKeys {
     /** 邮箱注册验证码：im:auth:email-code:{email} -> 6位验证码 */
     public static String emailCode(String email) {
         return "im:auth:email-code:" + email;
+    }
+
+    /** 邮箱找回密码验证码：im:auth:pwd-reset-code:{email} -> 6位验证码 */
+    public static String passwordResetCode(String email) {
+        return "im:auth:pwd-reset-code:" + email;
+    }
+
+    /** 邮箱找回密码试错计数：im:auth:pwd-reset-try:{email} */
+    public static String passwordResetAttempts(String email) {
+        return "im:auth:pwd-reset-try:" + email;
     }
 
     /** 邮箱验证码发送冷却：im:auth:email-cd:{email} */

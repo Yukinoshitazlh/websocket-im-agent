@@ -107,6 +107,37 @@ public class AuthSecurityService {
     }
 
     /**
+     * 找回密码：先校验 IP 限流 + 图形验证码 + 60 秒冷却，向已绑定邮箱发送 6 位重置密码验证码
+     */
+    public SendEmailCodeVO sendPasswordResetCode(String rawEmail, String captchaId, String captchaCode, String clientIp) {
+        ServerSecurityProperties.AuthPolicy auth = securityProperties.getAuth();
+        checkIpRateLimit("pwd_reset_code", clientIp, auth.getIpEmailCodeMaxPerHour(), Duration.ofHours(1));
+        verifyCaptcha(captchaId, captchaCode);
+        return dispatchEmailCodeToKeys(
+                rawEmail,
+                RedisKeys.passwordResetCode(normalizeEmail(rawEmail)),
+                RedisKeys.passwordResetAttempts(normalizeEmail(rawEmail)),
+                "【PulseIM】找回密码验证码",
+                "您正在 PulseIM 重置账号登录密码，本次验证码为："
+        );
+    }
+
+    /**
+     * 校验找回密码 6 位邮箱验证码（独立 Key，防与注册码混用，带防爆破试错上限）
+     */
+    public void verifyPasswordResetCode(String rawEmail, String providedCode) {
+        if (providedCode == null || providedCode.isBlank()) {
+            throw new BizException(ErrorCode.BAD_REQUEST, "请输入邮箱重置验证码");
+        }
+        String email = normalizeEmail(rawEmail);
+        verifyCodeWithKeys(
+                RedisKeys.passwordResetCode(email),
+                RedisKeys.passwordResetAttempts(email),
+                providedCode
+        );
+    }
+
+    /**
      * 已登录用户绑定/更换邮箱时发送 6 位验证码（走 IP 限流 + 60 秒冷却，无需重复填图形验证码）
      */
     public SendEmailCodeVO sendBindEmailCode(String rawEmail, String clientIp) {
@@ -134,6 +165,21 @@ public class AuthSecurityService {
     }
 
     private SendEmailCodeVO dispatchEmailCode(String rawEmail, String subject, String bodyPrefix) {
+        String email = normalizeEmail(rawEmail);
+        return dispatchEmailCodeToKeys(
+                rawEmail,
+                RedisKeys.emailCode(email),
+                RedisKeys.emailCodeAttempts(email),
+                subject,
+                bodyPrefix
+        );
+    }
+
+    private SendEmailCodeVO dispatchEmailCodeToKeys(String rawEmail,
+                                                    String codeKey,
+                                                    String attemptsKey,
+                                                    String subject,
+                                                    String bodyPrefix) {
         ServerSecurityProperties.AuthPolicy auth = securityProperties.getAuth();
         String email = normalizeEmail(rawEmail);
         String cooldownKey = RedisKeys.emailCodeCooldown(email);
@@ -143,8 +189,8 @@ public class AuthSecurityService {
         }
 
         String code = String.format("%06d", RANDOM.nextInt(1_000_000));
-        redisTemplate.opsForValue().set(RedisKeys.emailCode(email), code, EMAIL_CODE_TTL);
-        redisTemplate.delete(RedisKeys.emailCodeAttempts(email));
+        redisTemplate.opsForValue().set(codeKey, code, EMAIL_CODE_TTL);
+        redisTemplate.delete(attemptsKey);
 
         String devHint = null;
         if (auth.isMailEnabled()) {
@@ -168,7 +214,7 @@ public class AuthSecurityService {
                 throw new BizException(ErrorCode.INTERNAL_ERROR, "发送邮件失败，请稍后重试或检查邮箱地址");
             }
         } else {
-            log.info("[DEV 邮件模拟] 验证码已生成 -> email={}, code={} (10分钟有效)", email, code);
+            log.info("[DEV 邮件模拟] 验证码已生成 -> email={}, subject={}, code={} (10分钟有效)", email, subject, code);
             if (auth.isDevExposeEmailCode()) {
                 devHint = code;
             }
@@ -192,13 +238,15 @@ public class AuthSecurityService {
             throw new BizException(ErrorCode.BAD_REQUEST, "请输入邮箱验证码");
         }
         String email = normalizeEmail(rawEmail);
-        String codeKey = RedisKeys.emailCode(email);
+        verifyCodeWithKeys(RedisKeys.emailCode(email), RedisKeys.emailCodeAttempts(email), providedCode);
+    }
+
+    private void verifyCodeWithKeys(String codeKey, String tryKey, String providedCode) {
         String expected = redisTemplate.opsForValue().get(codeKey);
         if (expected == null) {
             throw new BizException(ErrorCode.BAD_REQUEST, "邮箱验证码已过期或未发送，请重新获取");
         }
         if (!expected.equals(providedCode.trim())) {
-            String tryKey = RedisKeys.emailCodeAttempts(email);
             Long attempts = redisTemplate.opsForValue().increment(tryKey);
             if (attempts != null && attempts == 1L) {
                 redisTemplate.expire(tryKey, EMAIL_CODE_TTL);
@@ -211,7 +259,7 @@ public class AuthSecurityService {
             throw new BizException(ErrorCode.BAD_REQUEST, "邮箱验证码不正确");
         }
         redisTemplate.delete(codeKey);
-        redisTemplate.delete(RedisKeys.emailCodeAttempts(email));
+        redisTemplate.delete(tryKey);
     }
 
     /**

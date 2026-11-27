@@ -23,4 +23,9 @@ public class UserProfileVO {
     private String statusText;
     private Boolean online;
     private Integer userType;
+    /** SELF / FRIEND / PENDING_OUT / PENDING_IN / BLOCKED / BLOCKED_BY / NONE */
+    private String relationStatus;
+    /** 当 relationStatus=PENDING_IN 时附带待处理申请单 ID，便于一键同意 */
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private Long pendingRequestId;
 }

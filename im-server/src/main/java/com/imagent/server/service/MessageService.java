@@ -21,6 +21,7 @@ import com.imagent.common.protocol.payload.TypingPayload;
 import com.imagent.server.dto.InternalAgentReplyRequest;
 import com.imagent.server.dto.MessageVO;
 import com.imagent.server.dto.ReactionGroupVO;
+import com.imagent.server.entity.ImConversation;
 import com.imagent.server.entity.ImGroupReminder;
 import com.imagent.server.entity.ImMessage;
 import com.imagent.server.entity.ImUser;
@@ -64,6 +65,7 @@ public class MessageService {
     private final ImUserMapper userMapper;
     private final UserService userService;
     private final ConversationService conversationService;
+    private final FriendService friendService;
     private final SeqGeneratorService seqGeneratorService;
     private final UnreadService unreadService;
     private final AgentBridgeService agentBridgeService;
@@ -80,6 +82,7 @@ public class MessageService {
                           ImUserMapper userMapper,
                           UserService userService,
                           ConversationService conversationService,
+                          FriendService friendService,
                           SeqGeneratorService seqGeneratorService,
                           UnreadService unreadService,
                           AgentBridgeService agentBridgeService,
@@ -95,6 +98,7 @@ public class MessageService {
         this.userMapper = userMapper;
         this.userService = userService;
         this.conversationService = conversationService;
+        this.friendService = friendService;
         this.seqGeneratorService = seqGeneratorService;
         this.unreadService = unreadService;
         this.agentBridgeService = agentBridgeService;
@@ -312,6 +316,13 @@ public class MessageService {
         if (!memberIds.contains(senderId)) {
             throw new BizException(ErrorCode.FORBIDDEN, "无权向该会话发送消息");
         }
+        if (memberIds.size() == 2 && friendService != null) {
+            ImConversation conv = conversationMapper.selectById(convId);
+            if (conv != null && Integer.valueOf(1).equals(conv.getType())) {
+                Long peerId = memberIds.stream().filter(id -> !id.equals(senderId)).findFirst().orElse(null);
+                friendService.assertCanDirectChat(senderId, peerId);
+            }
+        }
 
         String clientMsgId = (payload.getClientMsgId() == null || payload.getClientMsgId().isBlank())
                 ? UUID.randomUUID().toString()
@@ -332,7 +343,8 @@ public class MessageService {
         boolean triggerAgent = "TEXT".equals(msgType)
                 && agentBridgeService.shouldTriggerAgent(payload.getMentionAgent(), payload.getContent());
         if (triggerAgent) {
-            rateLimitService.checkAgentTriggerAllowed(senderId);
+            boolean usingByok = agentBridgeService.isUserUsingByok(senderId);
+            rateLimitService.checkAgentTriggerAllowed(senderId, usingByok);
         }
 
         String replyToSender = null;

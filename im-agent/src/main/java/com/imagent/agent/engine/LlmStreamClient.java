@@ -54,19 +54,46 @@ public class LlmStreamClient {
         this.objectMapper = objectMapper;
     }
 
+    /** 可选的每任务自定义大模型配置（用户 BYOK） */
+    public record LlmOverride(String baseUrl, String apiKey, String model) {
+        public boolean hasApiKey() {
+            return apiKey != null && !apiKey.isBlank();
+        }
+    }
+
     public LlmTurnResult streamTurn(Long taskId,
                                     List<Map<String, Object>> messages,
                                     List<AgentTool> tools,
                                     Consumer<String> onDelta) {
-        if (properties.getLlmApiKey() == null || properties.getLlmApiKey().isBlank()) {
+        return streamTurn(taskId, messages, tools, null, onDelta);
+    }
+
+    public LlmTurnResult streamTurn(Long taskId,
+                                    List<Map<String, Object>> messages,
+                                    List<AgentTool> tools,
+                                    LlmOverride override,
+                                    Consumer<String> onDelta) {
+        String effectiveApiKey = (override != null && override.hasApiKey())
+                ? override.apiKey().trim()
+                : properties.getLlmApiKey();
+        if (effectiveApiKey == null || effectiveApiKey.isBlank()) {
             return simulateStreamTurn(taskId, messages, onDelta);
         }
-        return callOpenAiCompatibleStream(taskId, messages, tools, onDelta);
+        String effectiveBaseUrl = (override != null && override.baseUrl() != null && !override.baseUrl().isBlank())
+                ? override.baseUrl().trim()
+                : properties.getLlmBaseUrl();
+        String effectiveModel = (override != null && override.model() != null && !override.model().isBlank())
+                ? override.model().trim()
+                : properties.getLlmModel();
+        return callOpenAiCompatibleStream(taskId, messages, tools, effectiveBaseUrl, effectiveApiKey, effectiveModel, onDelta);
     }
 
     private LlmTurnResult callOpenAiCompatibleStream(Long taskId,
                                                      List<Map<String, Object>> messages,
                                                      List<AgentTool> tools,
+                                                     String baseUrl,
+                                                     String apiKey,
+                                                     String model,
                                                      Consumer<String> onDelta) {
         long startNs = System.nanoTime();
         StringBuilder textBuf = new StringBuilder();
@@ -78,18 +105,18 @@ public class LlmStreamClient {
         CountDownLatch doneLatch = new CountDownLatch(1);
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", properties.getLlmModel());
+        body.put("model", model);
         body.put("messages", messages);
         body.put("stream", true);
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", buildOpenAiToolsSpec(tools));
         }
 
-        String endpoint = properties.getLlmBaseUrl().replaceAll("/+$", "") + "/chat/completions";
+        String endpoint = baseUrl.replaceAll("/+$", "") + "/chat/completions";
 
         Disposable disposable = llmWebClient.post()
                 .uri(endpoint)
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.getLlmApiKey().trim())
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.TEXT_EVENT_STREAM)
                 .bodyValue(body)

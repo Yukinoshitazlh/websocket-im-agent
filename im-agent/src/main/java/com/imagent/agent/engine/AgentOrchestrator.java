@@ -102,8 +102,11 @@ public class AgentOrchestrator {
                     .taskId(taskId).conversationId(convId).stage("thinking").build());
 
             List<Map<String, Object>> messages = buildInitialMessages(convId, event.getUserPrompt());
+            LlmStreamClient.LlmOverride override = (event.getCustomLlmApiKey() != null && !event.getCustomLlmApiKey().isBlank())
+                    ? new LlmStreamClient.LlmOverride(event.getCustomLlmBaseUrl(), event.getCustomLlmApiKey(), event.getCustomLlmModel())
+                    : null;
             runReactLoop(taskId, convId, event.getTriggerUserId(), event.getTriggerMsgId(),
-                    messages, 0, taskStartMs, event.getUserPrompt());
+                    messages, 0, taskStartMs, event.getUserPrompt(), override);
         } catch (Exception e) {
             log.error("Agent 任务执行失败: taskId={}", taskId, e);
             markTaskFailed(taskId, convId, e.getMessage(), taskStartMs);
@@ -157,7 +160,7 @@ public class AgentOrchestrator {
             appendToolTurn(messages, cp.getPendingToolCallId(), tool.name(), cp.getPendingToolArgsJson(), observation);
 
             runReactLoop(taskId, convId, cp.getTriggerUserId(), cp.getTriggerMsgId(),
-                    messages, cp.getCurrentStep(), resumeStartMs, null);
+                    messages, cp.getCurrentStep(), resumeStartMs, null, null);
         } catch (Exception e) {
             log.error("审批唤醒恢复执行失败: taskId={}", taskId, e);
             markTaskFailed(taskId, convId, e.getMessage(), resumeStartMs);
@@ -173,7 +176,8 @@ public class AgentOrchestrator {
                               List<Map<String, Object>> messages,
                               int startStep,
                               long startMs,
-                              String originalPrompt) throws Exception {
+                              String originalPrompt,
+                              LlmStreamClient.LlmOverride llmOverride) throws Exception {
         Integer firstTtftMs = null;
         int totalPromptTokens = 0;
         int totalCompletionTokens = 0;
@@ -190,7 +194,7 @@ public class AgentOrchestrator {
 
             updateTaskStatus(taskId, "RUNNING", step, null);
 
-            LlmTurnResult turn = llmStreamClient.streamTurn(taskId, messages, toolList, delta -> {
+            LlmTurnResult turn = llmStreamClient.streamTurn(taskId, messages, toolList, llmOverride, delta -> {
                 streamAccumulator.append(delta);
                 redisTemplate.opsForValue().append(streamBufKey, delta);
                 redisTemplate.expire(streamBufKey, STREAM_BUFFER_TTL);

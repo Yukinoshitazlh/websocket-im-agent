@@ -12,15 +12,22 @@ import type {
   ConversationMember,
   FileMeta,
   ForwardBundleMeta,
+  FriendRequestItem,
   PinnedMessage,
   ReactionGroup,
   SendEmailCodeResp,
+  UserLlmConfig,
   UserProfile,
   WsPacket,
   WsTicketResp
 } from '../types/im';
 import { apiRequest, setUnauthorizedHandler, uploadFileWithInstantCheck } from '../utils/api';
 import { cacheConversationMessages, loadCachedMessages } from '../utils/db';
+import {
+  isDesktopNotificationSupported,
+  requestDesktopNotificationPermission,
+  showDesktopNotification
+} from '../utils/notification';
 import { playMessageChime } from '../utils/sound';
 
 export interface ToastItem {
@@ -73,6 +80,12 @@ export const useChatStore = defineStore('chat', () => {
   const theme = ref<'light' | 'dark'>((localStorage.getItem('im_theme') as 'light' | 'dark') || 'light');
   const demoMode = ref<boolean>(isLocalDevHost() && localStorage.getItem('im_demo_mode') === '1');
   const soundEnabled = ref<boolean>(localStorage.getItem('im_sound') !== '0');
+  const desktopNotifyEnabled = ref<boolean>(localStorage.getItem('im_desktop_notify') === '1');
+  const navTab = ref<'chats' | 'contacts'>('chats');
+  const friends = ref<UserProfile[]>([]);
+  const blockedUsers = ref<UserProfile[]>([]);
+  const friendRequests = ref<FriendRequestItem[]>([]);
+  const userLlmConfig = ref<UserLlmConfig | null>(null);
   const viewingProfile = ref<UserProfile | null>(null);
 
   const wsState = ref<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -129,6 +142,10 @@ export const useChatStore = defineStore('chat', () => {
 
   const activeConversation = computed(() =>
     conversations.value.find((c) => c.id === activeConvId.value) || null
+  );
+
+  const pendingFriendRequestCount = computed(
+    () => friendRequests.value.filter((r) => r.direction === 'INCOMING' && r.status === 'PENDING').length
   );
 
   const activeStreamsList = computed(() =>
@@ -237,6 +254,183 @@ export const useChatStore = defineStore('chat', () => {
     if (soundEnabled.value) {
       playMessageChime();
     }
+  }
+
+  function setNavTab(tab: 'chats' | 'contacts') {
+    navTab.value = tab;
+    if (tab === 'contacts') {
+      loadContactsData();
+    }
+  }
+
+  async function toggleDesktopNotify() {
+    if (!desktopNotifyEnabled.value) {
+      if (!isDesktopNotificationSupported()) {
+        pushToast('当前浏览器不支持桌面系统通知', 'error');
+        return;
+      }
+      const perm = await requestDesktopNotificationPermission();
+      if (perm !== 'granted') {
+        pushToast('未获得浏览器通知权限，请在地址栏右侧允许通知', 'error');
+        desktopNotifyEnabled.value = false;
+        localStorage.setItem('im_desktop_notify', '0');
+        return;
+      }
+      desktopNotifyEnabled.value = true;
+      localStorage.setItem('im_desktop_notify', '1');
+      pushToast('已开启浏览器桌面通知（网页切后台时自动提醒）', 'success');
+    } else {
+      desktopNotifyEnabled.value = false;
+      localStorage.setItem('im_desktop_notify', '0');
+      pushToast('已关闭浏览器桌面通知');
+    }
+  }
+
+  async function sendPasswordResetCode(
+    email: string,
+    captchaId?: string,
+    captchaCode?: string
+  ): Promise<SendEmailCodeResp> {
+    return apiRequest<SendEmailCodeResp>('/api/auth/password-reset/code', '', {
+      method: 'POST',
+      body: JSON.stringify({ email, captchaId, captchaCode })
+    });
+  }
+
+  async function resetPasswordByEmail(payload: {
+    email: string;
+    emailCode: string;
+    newPassword: string;
+  }) {
+    await apiRequest<void>('/api/auth/password-reset/confirm', '', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  async function loadFriends(keyword = ''): Promise<UserProfile[]> {
+    if (!token.value) return [];
+    const qs = keyword.trim() ? `?keyword=${encodeURIComponent(keyword.trim())}` : '';
+    const list = await apiRequest<UserProfile[]>(`/api/friends${qs}`, token.value);
+    if (!keyword.trim()) {
+      friends.value = list;
+    }
+    return list;
+  }
+
+  async function loadContactsData() {
+    if (!token.value) return;
+    try {
+      const [fList, rList, bList] = await Promise.all([
+        apiRequest<UserProfile[]>('/api/friends', token.value),
+        apiRequest<FriendRequestItem[]>('/api/friends/requests', token.value),
+        apiRequest<UserProfile[]>('/api/friends/blocked', token.value)
+      ]);
+      friends.value = fList;
+      friendRequests.value = rList;
+      blockedUsers.value = bList;
+    } catch {
+      // ignore silent contacts load error
+    }
+  }
+
+  async function sendFriendRequest(targetUserId: string, remark = '') {
+    const res = await apiRequest<FriendRequestItem>('/api/friends/requests', token.value, {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId, remark })
+    });
+    await loadContactsData();
+    if (viewingProfile.value && String(viewingProfile.value.id) === String(targetUserId)) {
+      await openProfile(targetUserId);
+    }
+    pushToast(res.status === 'ACCEPTED' ? '双方互相申请，已成为好友！' : '好友申请已发送，等待对方同意', 'success');
+  }
+
+  async function acceptFriendRequest(requestId: string) {
+    const conv = await apiRequest<Conversation>(
+      `/api/friends/requests/${encodeURIComponent(requestId)}/accept`,
+      token.value,
+      { method: 'POST' }
+    );
+    await Promise.all([loadContactsData(), loadConversations()]);
+    pushToast('已通过好友申请，现在可以开始聊天了', 'success');
+    if (conv?.id) {
+      navTab.value = 'chats';
+      await selectConversation(conv.id);
+    }
+  }
+
+  async function rejectFriendRequest(requestId: string) {
+    await apiRequest<void>(`/api/friends/requests/${encodeURIComponent(requestId)}/reject`, token.value, {
+      method: 'POST'
+    });
+    await loadContactsData();
+    pushToast('已拒绝该好友申请');
+  }
+
+  async function deleteFriend(friendId: string) {
+    await apiRequest<void>(`/api/friends/${encodeURIComponent(friendId)}`, token.value, {
+      method: 'DELETE'
+    });
+    await loadContactsData();
+    if (viewingProfile.value && String(viewingProfile.value.id) === String(friendId)) {
+      await openProfile(friendId);
+    }
+    pushToast('已解除好友关系');
+  }
+
+  async function blockUser(targetUserId: string) {
+    await apiRequest<void>(`/api/friends/${encodeURIComponent(targetUserId)}/block`, token.value, {
+      method: 'POST'
+    });
+    await loadContactsData();
+    if (viewingProfile.value && String(viewingProfile.value.id) === String(targetUserId)) {
+      await openProfile(targetUserId);
+    }
+    pushToast('已加入黑名单，将拒收对方私聊与好友申请');
+  }
+
+  async function unblockUser(targetUserId: string) {
+    await apiRequest<void>(`/api/friends/${encodeURIComponent(targetUserId)}/block`, token.value, {
+      method: 'DELETE'
+    });
+    await loadContactsData();
+    if (viewingProfile.value && String(viewingProfile.value.id) === String(targetUserId)) {
+      await openProfile(targetUserId);
+    }
+    pushToast('已移出黑名单', 'success');
+  }
+
+  async function loadMyLlmConfig(): Promise<UserLlmConfig | null> {
+    if (!token.value) return null;
+    try {
+      userLlmConfig.value = await apiRequest<UserLlmConfig>('/api/users/me/llm-config', token.value);
+      return userLlmConfig.value;
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveMyLlmConfig(payload: {
+    enabled?: boolean;
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+  }) {
+    userLlmConfig.value = await apiRequest<UserLlmConfig>('/api/users/me/llm-config', token.value, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    pushToast(
+      payload.clearApiKey
+        ? '已清除自定义 API Key，恢复使用公共 AI 服务'
+        : userLlmConfig.value.enabled
+          ? '自定义 AI 大模型（BYOK）已保存并启用'
+          : 'AI 配置已保存（当前使用公共 AI 服务）',
+      'success'
+    );
+    return userLlmConfig.value;
   }
 
   async function refreshMyProfile() {
@@ -446,6 +640,7 @@ export const useChatStore = defineStore('chat', () => {
     sessionStorage.setItem('im_user', JSON.stringify(data.user));
     loadDraftsFromStorage();
     loadConversations();
+    loadContactsData();
     connectWs();
   }
 
@@ -458,6 +653,11 @@ export const useChatStore = defineStore('chat', () => {
     sessionStorage.clear();
     token.value = '';
     currentUser.value = null;
+    navTab.value = 'chats';
+    friends.value = [];
+    blockedUsers.value = [];
+    friendRequests.value = [];
+    userLlmConfig.value = null;
     wsState.value = 'disconnected';
     wsStatusText.value = '未连接';
     wsRttMs.value = null;
@@ -657,6 +857,9 @@ export const useChatStore = defineStore('chat', () => {
         break;
       case 'AGENT_APPROVAL_CARD':
         onAgentApprovalCard(pkt.data);
+        break;
+      case 'FRIEND_EVENT':
+        onFriendEvent(pkt.data);
         break;
       case 'FORCE_LOGOUT':
         if (changingPassword && pkt.data?.reason === 'PASSWORD_CHANGED') {
@@ -1330,6 +1533,26 @@ export const useChatStore = defineStore('chat', () => {
       if (document.hidden) {
         hiddenUnreadCount++;
         updateDocumentTitle();
+        if (desktopNotifyEnabled.value) {
+          const bodyPreview =
+            incoming.msgType === 'IMAGE'
+              ? '[图片]'
+              : incoming.msgType === 'FILE'
+                ? `[文件] ${incoming.content}`
+                : incoming.msgType === 'FORWARD_BUNDLE'
+                  ? '[合并转发聊天记录]'
+                  : incoming.content.slice(0, 80);
+          showDesktopNotification({
+            title: conv?.type === 2 ? `${conv.title} · ${incoming.senderNickname}` : incoming.senderNickname,
+            body: bodyPreview,
+            tag: `conv-${incoming.conversationId}`,
+            icon: incoming.senderAvatar || undefined,
+            onClick: () => {
+              navTab.value = 'chats';
+              selectConversation(incoming.conversationId);
+            }
+          });
+        }
       }
     }
 
@@ -1542,12 +1765,37 @@ export const useChatStore = defineStore('chat', () => {
     loadAgentMetrics();
   }
 
+  function onFriendEvent(data: {
+    eventType?: string;
+    fromUserId?: string;
+    fromNickname?: string;
+    remark?: string;
+  }) {
+    loadContactsData();
+    if (data?.eventType === 'REQUEST_RECEIVED') {
+      const text = `${data.fromNickname || '新朋友'} 请求添加你为好友${data.remark ? '：' + data.remark : ''}`;
+      pushToast(text, 'info');
+      if (document.hidden && desktopNotifyEnabled.value) {
+        showDesktopNotification({
+          title: '新的好友申请 · PulseIM',
+          body: text,
+          tag: 'friend-request',
+          onClick: () => setNavTab('contacts')
+        });
+      }
+    } else if (data?.eventType === 'REQUEST_ACCEPTED') {
+      loadConversations();
+      pushToast(`${data.fromNickname || '对方'} 已同意你的好友申请`, 'success');
+    }
+  }
+
   loadAuthConfig();
 
   if (token.value && currentUser.value) {
     loadDraftsFromStorage();
     refreshMyProfile();
     loadConversations();
+    loadContactsData();
     connectWs();
   }
 
@@ -1559,6 +1807,13 @@ export const useChatStore = defineStore('chat', () => {
     theme,
     demoMode,
     soundEnabled,
+    desktopNotifyEnabled,
+    navTab,
+    friends,
+    blockedUsers,
+    friendRequests,
+    pendingFriendRequestCount,
+    userLlmConfig,
     viewingProfile,
     wsState,
     wsStatusText,
@@ -1597,9 +1852,23 @@ export const useChatStore = defineStore('chat', () => {
     toggleTheme,
     toggleDemoMode,
     toggleSound,
+    toggleDesktopNotify,
+    setNavTab,
     loadAuthConfig,
     fetchCaptcha,
     sendEmailCode,
+    sendPasswordResetCode,
+    resetPasswordByEmail,
+    loadFriends,
+    loadContactsData,
+    sendFriendRequest,
+    acceptFriendRequest,
+    rejectFriendRequest,
+    deleteFriend,
+    blockUser,
+    unblockUser,
+    loadMyLlmConfig,
+    saveMyLlmConfig,
     openProfile,
     uploadAvatarFile,
     updateMyProfile,

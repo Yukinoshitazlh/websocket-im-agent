@@ -19,7 +19,7 @@ const submitting = ref(false);
 
 async function loadCandidates() {
   try {
-    candidates.value = await store.searchUsers(filterKw.value.trim());
+    candidates.value = await store.loadFriends(filterKw.value.trim());
   } catch {
     candidates.value = [];
   }
@@ -74,11 +74,11 @@ onMounted(loadCandidates);
         </label>
 
         <label class="field">
-          <span>选择群成员（已选 {{ selectedIds.size }} 人，默认包含自己与 AI 助手）</span>
+          <span>选择好友入群（已选 {{ selectedIds.size }} 人，默认包含自己与 AI 助手）</span>
           <input
             v-model="filterKw"
             class="input"
-            placeholder="输入用户名或昵称筛选..."
+            placeholder="输入好友用户名、昵称或邮箱筛选..."
             @input="loadCandidates"
           />
         </label>
@@ -102,7 +102,7 @@ onMounted(loadCandidates);
               <small>@{{ u.username }}</small>
             </span>
           </label>
-          <div v-if="candidates.length === 0" class="member-empty">未找到其他可选用户</div>
+          <div v-if="candidates.length === 0" class="member-empty">暂无可选好友，请先到通讯录添加好友</div>
         </div>
       </div>
 

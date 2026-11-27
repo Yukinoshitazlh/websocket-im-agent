@@ -37,6 +37,7 @@ class MessageServiceIdempotencyTest {
     @Mock private ImUserMapper userMapper;
     @Mock private UserService userService;
     @Mock private ConversationService conversationService;
+    @Mock private FriendService friendService;
     @Mock private SeqGeneratorService seqGeneratorService;
     @Mock private UnreadService unreadService;
     @Mock private AgentBridgeService agentBridgeService;
@@ -53,7 +54,7 @@ class MessageServiceIdempotencyTest {
     @BeforeEach
     void setUp() {
         messageService = new MessageService(
-                messageMapper, conversationMapper, userMapper, userService, conversationService,
+                messageMapper, conversationMapper, userMapper, userService, conversationService, friendService,
                 seqGeneratorService, unreadService, agentBridgeService, rateLimitService, messageCollabService,
                 redisTemplate, rabbitTemplate, transactionTemplate, objectMapper, Runnable::run
         );

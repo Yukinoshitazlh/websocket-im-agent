@@ -116,3 +116,22 @@ node scripts/load-test.mjs --users=200 --msgs=5 --ws=ws://127.0.0.1:9001/ws,ws:/
 3. **CI/CD 流水线**：
    - [.github/workflows/ci.yml](.github/workflows/ci.yml)：每次 Push / PR 自动完成前端 `vue-tsc` + `vite build`、JDK 21 全模块单测与 Fat JAR 打包；推送 `v*` 标签自动发布 GitHub Release；
    - [.github/workflows/deploy.yml](.github/workflows/deploy.yml)：配置仓库 Secrets（`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`）后，支持手动一键或 `v2.*` 标签全自动滚动上线。
+
+---
+
+## 完整产品体验升级（v2.1）
+
+在 `v2.0` 生产安全基线之上，进一步完善日常使用与公网成本防护能力：
+
+1. **微信式好友关系与防骚扰闭环（Flyway `V3`）**：
+   - 新增通讯录面板与好友申请流（支持按账号 / 昵称 / 邮箱搜索、发送好友验证、同意 / 拒绝、删除好友、拉黑 / 取消拉黑），状态变更通过 `FRIEND_EVENT` 实时推送；
+   - 单聊发消息与建群拉人严格校验双向好友及黑名单状态；旧数据中的已有单聊会话会在 `V3` 迁移时自动补齐互为好友关系，实现无感平滑升级。
+2. **找回密码与账户安全完善**：
+   - 登录页支持「忘记密码」邮箱验证重置流程（SVG 图形验证码 + 6 位重置码 + 独立 Redis 限流与错误次数锁定），重置成功后自动递增 `token_version` 并下发 `FORCE_LOGOUT` 踢下线旧端；
+   - 个人中心支持已登录用户自助绑定与换绑邮箱，且全程适配深色/浅色主题。
+3. **浏览器桌面通知与移动端响应式适配**：
+   - 接入原生 Browser Notification API（支持开关与权限申请），在页面处于后台或非当前会话收到新消息 / 好友申请时弹出系统桌面提醒并点击直达会话；
+   - 针对 `<= 768px` 移动端视口重构为底部导航栏、单栏会话/聊天切换与全屏右侧抽屉，手机浏览器可流畅使用。
+4. **全站公共 AI 成本熔断与用户自带 Key（BYOK）**：
+   - 在个人日配额之外新增全站每日公共 AI 总调用熔断阈值（`IM_AGENT_GLOBAL_DAILY_QUOTA`），公网部署彻底杜绝刷爆账单风险；
+   - 个人设置支持配置自己的 OpenAI 兼容 `Base URL / API Key / Model`，服务端使用 **AES-256-GCM** 加密落库并拦截内网 SSRF 地址，开启 BYOK 后自动绕过公共日配额限制并透传至 `im-agent` 动态调用。

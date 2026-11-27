@@ -26,6 +26,9 @@ public enum WsPacketType {
     AGENT_APPROVAL_CARD,
     AGENT_APPROVAL,
 
+    // 好友申请与关系变更实时通知
+    FRIEND_EVENT,
+
     // 安全会话控制（改密 / 封号强制踢下线）
     FORCE_LOGOUT,
 

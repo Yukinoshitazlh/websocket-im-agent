@@ -85,10 +85,14 @@ async function handlePickConversation(convId: string) {
 
 async function handlePickUser(user: UserProfile) {
   clearSearch();
-  try {
-    await store.startDirect(user.id);
-  } catch (e: any) {
-    store.pushToast(e.message || '创建私聊失败', 'error');
+  if (user.relationStatus === 'FRIEND') {
+    try {
+      await store.startDirect(user.id);
+    } catch (e: any) {
+      store.pushToast(e.message || '创建私聊失败', 'error');
+    }
+  } else {
+    await store.openProfile(user.id);
   }
 }
 
@@ -145,7 +149,7 @@ function getDraftText(convId: string): string {
             </button>
           </template>
 
-          <div class="search-group-label">更多用户（发起私聊）</div>
+          <div class="search-group-label">用户搜索（好友开聊 / 陌生人加好友）</div>
           <div v-if="searching" class="search-empty">搜索中...</div>
           <div v-else-if="searchHits.length === 0" class="search-empty">未找到其他匹配用户</div>
           <button
@@ -159,6 +163,19 @@ function getDraftText(convId: string): string {
             <span class="search-item-meta">
               <strong>{{ u.nickname }}</strong>
               <small>@{{ u.username }}</small>
+            </span>
+            <span class="search-rel-tag" :class="u.relationStatus?.toLowerCase() || 'none'">
+              {{
+                u.relationStatus === 'FRIEND'
+                  ? '好友'
+                  : u.relationStatus === 'PENDING_OUT'
+                    ? '已申请'
+                    : u.relationStatus === 'PENDING_IN'
+                      ? '待通过'
+                      : u.relationStatus === 'BLOCKED'
+                        ? '已拉黑'
+                        : '加好友'
+              }}
             </span>
           </button>
         </div>
@@ -728,5 +745,54 @@ function getDraftText(convId: string): string {
 .ctx-item:hover {
   background: var(--hover);
   color: var(--accent);
+}
+
+.ctx-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 4px;
+}
+
+.ctx-item.danger {
+  color: var(--danger);
+}
+
+.ctx-item.danger:hover {
+  background: rgba(224, 49, 59, 0.1);
+  color: var(--danger);
+}
+
+.search-rel-tag {
+  margin-left: auto;
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.search-rel-tag.friend {
+  background: rgba(19, 138, 71, 0.14);
+  color: var(--ok);
+}
+
+.search-rel-tag.pending_out,
+.search-rel-tag.pending_in {
+  background: var(--rail);
+  color: var(--ink-muted);
+}
+
+.search-rel-tag.blocked {
+  background: rgba(224, 49, 59, 0.12);
+  color: var(--danger);
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+    flex: 1;
+    border-radius: 18px;
+  }
 }
 </style>

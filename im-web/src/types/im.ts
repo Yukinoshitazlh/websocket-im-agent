@@ -16,6 +16,29 @@ export interface UserProfile {
   statusText?: string;
   online?: boolean | null;
   userType: number;
+  relationStatus?: 'SELF' | 'FRIEND' | 'PENDING_OUT' | 'PENDING_IN' | 'BLOCKED' | 'BLOCKED_BY' | 'NONE';
+  pendingRequestId?: string | null;
+}
+
+export interface FriendRequestItem {
+  id: string;
+  direction: 'INCOMING' | 'OUTGOING';
+  peerUserId: string;
+  peerUsername: string;
+  peerNickname: string;
+  peerAvatar: string;
+  peerSignature?: string;
+  remark: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  createdAt: number;
+}
+
+export interface UserLlmConfig {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  apiKeyMask: string;
+  hasApiKey: boolean;
 }
 
 export interface AuthResponse {
@@ -233,6 +256,7 @@ export type WsPacketType =
   | 'AGENT_CANCEL'
   | 'AGENT_APPROVAL_CARD'
   | 'AGENT_APPROVAL'
+  | 'FRIEND_EVENT'
   | 'FORCE_LOGOUT'
   | 'ERROR';
 
